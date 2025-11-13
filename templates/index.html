@@ -2,11 +2,11 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Face DB</title>
+  <title>Face DB & Video Clips</title>
   <style>
     body { font-family: sans-serif; background: #111; color: #eee; }
     h1 { margin-bottom: 0.5rem; }
-    .container { max-width: 900px; margin: 0 auto; padding: 1rem; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
     .persons { display: flex; flex-wrap: wrap; gap: 1rem; }
     .card {
       background: #222;
@@ -44,31 +44,130 @@
     }
     .message {
       margin-bottom: 1rem;
+      padding: 1rem;
+      background: #1e3a1e;
+      border-radius: 8px;
       color: #4ade80;
+    }
+    .clips-section {
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #1a1a1a;
+      border-radius: 12px;
+    }
+    .clip-item {
+      background: #222;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .clip-info {
+      flex: 1;
+    }
+    .clip-download {
+      margin-left: 1rem;
+    }
+    .clip-download a {
+      color: #3b82f6;
+      text-decoration: none;
+      padding: 0.5rem 1rem;
+      background: #2a2a2a;
+      border-radius: 6px;
+    }
+    .clip-download a:hover {
+      background: #3a3a3a;
+    }
+    video {
+      max-width: 400px;
+      margin-top: 0.5rem;
+      border-radius: 8px;
+    }
+    .form-row {
+      margin-bottom: 0.75rem;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.25rem;
+      color: #ccc;
+    }
+    input[type="number"], input[type="file"] {
+      width: 100%;
+      max-width: 400px;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background: #2a2a2a;
+      color: #eee;
     }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>Face Database</h1>
+  <h1>Face Database & Video Clips</h1>
 
   {% if message %}
   <div class="message">{{ message }}</div>
   {% endif %}
 
   <form action="/process_video" method="post" enctype="multipart/form-data">
-    <label>Upload video:
+    <div class="form-row">
+      <label>Upload video:</label>
       <input type="file" name="video_file" accept="video/*" required>
-    </label><br>
-    <label>Similarity threshold (0.47 = balanced, lower = more persons):
+    </div>
+    
+    <div class="form-row">
+      <label>Similarity threshold (0.47 = balanced, lower = more persons):</label>
       <input type="number" step="0.01" name="sim_threshold" value="0.47" min="0.35" max="0.65">
-    </label><br>
-    <button type="submit">Process Video</button>
-    <p style="font-size: 0.9em; color: #888;">
-      Note: Processes ALL frames, but only uses frames with exactly 1 face.<br>
-      Skips frames with 0 faces or 2+ faces (group scenes).
+    </div>
+    
+    <div class="form-row">
+      <label>Minimum frames per clip (skip shorter appearances):</label>
+      <input type="number" name="min_clip_frames" value="15" min="1" max="300">
+      <small style="color: #888; display: block; margin-top: 0.25rem;">
+        Clips with fewer frames will be ignored. Example: 15 frames = 0.5s @ 30fps, 0.6s @ 25fps
+      </small>
+    </div>
+    
+    <button type="submit">Process Video & Create Clips</button>
+    
+    <p style="font-size: 0.9em; color: #888; margin-top: 1rem;">
+      <strong>How it works:</strong><br>
+      • Processes ALL frames, but only keeps frames with exactly 1 face<br>
+      • Skips frames with 0 faces or 2+ faces (group scenes)<br>
+      • Creates separate video clips when person changes<br>
+      • Ignores very short appearances (less than minimum frames)<br>
+      • Includes audio in saved clips
     </p>
   </form>
+
+  {% if clips %}
+  <div class="clips-section">
+    <h2>Created Video Clips ({{ clips | length }})</h2>
+    {% for clip in clips %}
+      <div class="clip-item">
+        <div class="clip-info">
+          <strong>{{ clip.filename }}</strong><br>
+          <span class="small">
+            Person: {{ clip.person_id }} | 
+            Frames: {{ clip.start_frame }}-{{ clip.end_frame }} ({{ clip.num_frames }} frames) | 
+            Duration: {{ "%.2f"|format(clip.duration) }}s
+          </span>
+          <br>
+          <video controls>
+            <source src="/clips/{{ clip.filename }}" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </div>
+        <div class="clip-download">
+          <a href="/clips/{{ clip.filename }}" download>Download</a>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <h2>Detected Persons ({{ persons | length }})</h2>
   <div class="persons">

@@ -1,11 +1,13 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from contextlib import asynccontextmanager
+import subprocess
+import shutil
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
@@ -13,6 +15,9 @@ from insightface.app import FaceAnalysis
 
 FACES_ROOT = Path("faces_db")
 FACES_ROOT.mkdir(exist_ok=True)
+
+CLIPS_ROOT = Path("video_clips")
+CLIPS_ROOT.mkdir(exist_ok=True)
 
 # --------- Face DB in memory ---------
 # structure:
@@ -84,8 +89,66 @@ app = FastAPI(lifespan=lifespan)
 
 # Mount faces folder as static files (so we can show images in HTML)
 app.mount("/faces", StaticFiles(directory=FACES_ROOT), name="faces")
+app.mount("/clips", StaticFiles(directory=CLIPS_ROOT), name="clips")
 
 templates = Jinja2Templates(directory="templates")
+
+
+def extract_audio_from_video(video_path: Path, audio_path: Path) -> bool:
+    """Extract audio from video using ffmpeg."""
+    try:
+        cmd = [
+            "ffmpeg", "-i", str(video_path),
+            "-vn", "-acodec", "copy",
+            str(audio_path), "-y"
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"[Audio] Failed to extract audio: {e}")
+        return False
+
+
+def create_clip_with_audio(
+    video_path: Path,
+    audio_path: Optional[Path],
+    start_frame: int,
+    end_frame: int,
+    fps: float,
+    output_path: Path
+) -> bool:
+    """Create a video clip from start_frame to end_frame with audio."""
+    try:
+        start_time = start_frame / fps
+        duration = (end_frame - start_frame + 1) / fps
+        
+        if audio_path and audio_path.exists():
+            # With audio
+            cmd = [
+                "ffmpeg", "-i", str(video_path),
+                "-i", str(audio_path),
+                "-ss", str(start_time),
+                "-t", str(duration),
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-strict", "experimental",
+                str(output_path), "-y"
+            ]
+        else:
+            # Without audio
+            cmd = [
+                "ffmpeg", "-i", str(video_path),
+                "-ss", str(start_time),
+                "-t", str(duration),
+                "-c:v", "libx264",
+                str(output_path), "-y"
+            ]
+        
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"[Clip] Failed to create clip: {e}")
+        return False
 
 
 def iou(box1, box2) -> float:
@@ -249,7 +312,7 @@ async def index(request: Request):
 
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "persons": persons_view},
+        {"request": request, "persons": persons_view, "clips": []},
     )
 
 
@@ -258,11 +321,13 @@ async def process_video(
     request: Request,
     video_file: UploadFile = File(...),
     frame_skip: int = Form(1),      # process every frame (set to 1)
-    sim_threshold: float = Form(0.47)
+    sim_threshold: float = Form(0.47),
+    min_clip_frames: int = Form(15)  # minimum frames to save a clip
 ):
     """
-    Upload a video, run face clustering with tracking, then show updated persons page.
+    Upload a video, detect faces, track person changes, and save clips.
     Only processes frames with exactly 1 face.
+    Saves clips when person changes, ignoring short appearances.
     """
     global active_tracks, next_track_id
     
@@ -276,11 +341,24 @@ async def process_video(
         f.write(await video_file.read())
 
     cap = cv2.VideoCapture(str(temp_video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Extract audio once
+    temp_audio_path = Path("temp_audio.aac")
+    has_audio = extract_audio_from_video(temp_video_path, temp_audio_path)
+    
     frame_idx = 0
     detected_count = 0
     rejected_count = 0
     skipped_no_face = 0
     skipped_multiple_faces = 0
+    
+    # Track person changes
+    # Structure: [(frame_num, person_id), ...]
+    frame_person_map: List[Tuple[int, Optional[str]]] = []
+    
+    print(f"[Video] Processing {total_frames} frames at {fps} FPS...")
 
     while True:
         ret, frame = cap.read()
@@ -295,11 +373,13 @@ async def process_video(
         # Skip frames with no faces
         if len(faces) == 0:
             skipped_no_face += 1
+            frame_person_map.append((frame_idx, None))
             continue
         
         # Skip frames with 2 or more faces
         if len(faces) >= 2:
             skipped_multiple_faces += 1
+            frame_person_map.append((frame_idx, None))
             continue
         
         # Process only if exactly 1 face
@@ -317,6 +397,7 @@ async def process_video(
         face_img = frame[y1:y2, x1:x2]
 
         if face_img.size == 0:
+            frame_person_map.append((frame_idx, None))
             continue
 
         # Calculate bbox area
@@ -325,10 +406,10 @@ async def process_video(
         # Quality check - skip low quality faces
         if not is_good_quality_face(face_img, bbox_area, det_score):
             rejected_count += 1
+            frame_person_map.append((frame_idx, None))
             continue
 
         emb = np.array(emb, dtype=np.float32)
-        bbox = [x1, y1, x2, y2]
 
         # Try to match with existing persons by embedding
         person_id, sim = best_match(emb, threshold=sim_threshold)
@@ -342,20 +423,100 @@ async def process_video(
             save_face_image(person_id, emb, face_img)
             print(f"[FaceApp] Frame {frame_idx}: Matched {person_id} (sim={sim:.3f})")
         
+        frame_person_map.append((frame_idx, person_id))
         detected_count += 1
 
     cap.release()
-    temp_video_path.unlink(missing_ok=True)
     
-    total_frames = frame_idx
-    print(f"[FaceApp] Processing complete:")
+    print(f"[FaceApp] Detection complete:")
     print(f"  Total frames: {total_frames}")
     print(f"  Frames with 0 faces: {skipped_no_face}")
     print(f"  Frames with 2+ faces: {skipped_multiple_faces}")
     print(f"  Frames with 1 face (processed): {detected_count + rejected_count}")
     print(f"  Good quality faces saved: {detected_count}")
     print(f"  Low quality rejected: {rejected_count}")
-
+    
+    # Now analyze frame_person_map to create clips
+    print(f"\n[Clips] Analyzing person changes (min_clip_frames={min_clip_frames})...")
+    clips_created = []
+    
+    # Group consecutive frames by person
+    segments = []  # [(start_frame, end_frame, person_id), ...]
+    current_person = None
+    segment_start = None
+    
+    for frame_num, person_id in frame_person_map:
+        if person_id is None:
+            # No valid face in this frame
+            if current_person is not None:
+                # End current segment
+                segments.append((segment_start, frame_num - 1, current_person))
+                current_person = None
+                segment_start = None
+            continue
+        
+        if person_id != current_person:
+            # Person changed
+            if current_person is not None:
+                # End previous segment
+                segments.append((segment_start, frame_num - 1, current_person))
+            # Start new segment
+            current_person = person_id
+            segment_start = frame_num
+    
+    # Don't forget the last segment
+    if current_person is not None and segment_start is not None:
+        segments.append((segment_start, frame_idx, current_person))
+    
+    print(f"[Clips] Found {len(segments)} segments before filtering")
+    
+    # Filter segments by minimum frames
+    valid_segments = [
+        (start, end, pid) for start, end, pid in segments
+        if (end - start + 1) >= min_clip_frames
+    ]
+    
+    print(f"[Clips] {len(valid_segments)} segments meet minimum frame threshold")
+    
+    # Create clips for valid segments
+    clip_counter = 1
+    for start_frame, end_frame, person_id in valid_segments:
+        num_frames = end_frame - start_frame + 1
+        duration = num_frames / fps
+        
+        output_filename = f"clip_{clip_counter:04d}_{person_id}_frames_{start_frame}-{end_frame}.mp4"
+        output_path = CLIPS_ROOT / output_filename
+        
+        print(f"[Clips] Creating clip {clip_counter}: {person_id}, frames {start_frame}-{end_frame} ({num_frames} frames, {duration:.2f}s)")
+        
+        success = create_clip_with_audio(
+            temp_video_path,
+            temp_audio_path if has_audio else None,
+            start_frame - 1,  # Convert to 0-indexed
+            end_frame - 1,
+            fps,
+            output_path
+        )
+        
+        if success:
+            clips_created.append({
+                "filename": output_filename,
+                "person_id": person_id,
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "num_frames": num_frames,
+                "duration": duration
+            })
+            clip_counter += 1
+        else:
+            print(f"[Clips] Failed to create clip for frames {start_frame}-{end_frame}")
+    
+    # Cleanup temp files
+    temp_video_path.unlink(missing_ok=True)
+    temp_audio_path.unlink(missing_ok=True)
+    
+    print(f"\n[Clips] Created {len(clips_created)} video clips")
+    
     # Reload persons view
     persons_view = []
     for pid, info in person_db.items():
@@ -373,7 +534,8 @@ async def process_video(
         {
             "request": request,
             "persons": persons_view,
-            "message": f"Processed {total_frames} frames. Found {detected_count} good faces ({skipped_no_face} no-face, {skipped_multiple_faces} multi-face, {rejected_count} low-quality skipped). Discovered {len(persons_view)} unique persons.",
+            "clips": clips_created,
+            "message": f"Processed {total_frames} frames. Found {detected_count} good faces ({skipped_no_face} no-face, {skipped_multiple_faces} multi-face, {rejected_count} low-quality skipped). Created {len(clips_created)} video clips from {len(valid_segments)} valid segments. Discovered {len(persons_view)} unique persons.",
         },
     )
 
