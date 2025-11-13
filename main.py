@@ -60,23 +60,39 @@ async def lifespan(app: FastAPI):
     for person_folder in FACES_ROOT.iterdir():
         if not person_folder.is_dir() or not person_folder.name.startswith("person_"):
             continue
-        images = list(person_folder.glob("*.jpg")) + list(person_folder.glob("*.png"))
-        if not images:
-            continue
-        img_path = images[0]
-        img = cv2.imread(str(img_path))
-        if img is None:
-            continue
-
-        faces = face_app.get(img)
-        if not faces:
-            continue
-
-        emb = faces[0].normed_embedding
-        person_db[person_folder.name] = {
-            "embeddings": [emb],
-            "folder": person_folder,
-        }
+        
+        embeddings = []
+        
+        # Try loading from .npy files first (faster)
+        npy_files = list(person_folder.glob("*.npy"))
+        if npy_files:
+            for npy_file in npy_files:
+                try:
+                    emb = np.load(str(npy_file))
+                    embeddings.append(emb)
+                except Exception as e:
+                    print(f"[Warning] Failed to load {npy_file}: {e}")
+        
+        # Fallback: extract embeddings from images if no .npy files
+        if not embeddings:
+            images = list(person_folder.glob("*.jpg")) + list(person_folder.glob("*.png"))
+            for img_path in images:
+                img = cv2.imread(str(img_path))
+                if img is None:
+                    continue
+                faces = face_app.get(img)
+                if faces:
+                    emb = faces[0].normed_embedding
+                    embeddings.append(emb)
+                    # Save as .npy for future faster loading
+                    npy_path = img_path.with_suffix('.npy')
+                    np.save(str(npy_path), emb)
+        
+        if embeddings:
+            person_db[person_folder.name] = {
+                "embeddings": embeddings,
+                "folder": person_folder,
+            }
     print(f"[FaceApp] Loaded {len(person_db)} persons.")
     
     yield
@@ -247,8 +263,12 @@ def register_new_person(embedding: np.ndarray, face_img: np.ndarray) -> str:
     person_folder.mkdir(parents=True, exist_ok=True)
 
     # Save first face image
-    filename = person_folder / "face_0001.jpg"
-    cv2.imwrite(str(filename), face_img)
+    img_filename = person_folder / "face_0001.jpg"
+    cv2.imwrite(str(img_filename), face_img)
+    
+    # Save embedding as .npy file for faster loading
+    emb_filename = person_folder / "face_0001.npy"
+    np.save(str(emb_filename), embedding)
 
     person_db[person_id] = {
         "embeddings": [embedding],

@@ -24,7 +24,7 @@ person_db = {}
 
 def load_face_database():
     """Load all faces from the faces_db folder."""
-    global person_db
+    global person_db, face_app
     
     if not FACES_ROOT.exists():
         print(f"[ERROR] Face database folder '{FACES_ROOT}' does not exist!")
@@ -45,9 +45,10 @@ def load_face_database():
         # Debug: Show folder contents
         all_files = list(person_folder.glob("*"))
         npy_files = list(person_folder.glob("*.npy"))
-        print(f"  - Checking {person_id}: {len(all_files)} total files, {len(npy_files)} .npy files")
+        img_files = list(person_folder.glob("*.jpg")) + list(person_folder.glob("*.png"))
+        print(f"  - Checking {person_id}: {len(all_files)} total files, {len(npy_files)} .npy, {len(img_files)} images")
         
-        # Load all .npy embeddings for this person
+        # Try loading from .npy files first
         for emb_file in npy_files:
             try:
                 emb = np.load(emb_file)
@@ -55,6 +56,25 @@ def load_face_database():
                 print(f"    * Loaded {emb_file.name}: shape {emb.shape}")
             except Exception as e:
                 print(f"    * ERROR loading {emb_file.name}: {e}")
+        
+        # Fallback: extract embeddings from images if no .npy files loaded
+        if not embeddings and img_files:
+            print(f"    ! No .npy files, extracting from {len(img_files)} images...")
+            for img_path in img_files:
+                try:
+                    img = cv2.imread(str(img_path))
+                    if img is None:
+                        continue
+                    faces = face_app.get(img)
+                    if faces:
+                        emb = faces[0].normed_embedding
+                        embeddings.append(emb)
+                        # Save as .npy for future use
+                        npy_path = img_path.with_suffix('.npy')
+                        np.save(str(npy_path), emb)
+                        print(f"    * Extracted and saved {npy_path.name}")
+                except Exception as e:
+                    print(f"    * ERROR processing {img_path.name}: {e}")
         
         if embeddings:
             person_db[person_id] = {
@@ -71,13 +91,7 @@ def load_face_database():
         print("\n" + "="*60)
         print("WARNING: No embeddings loaded!")
         print("="*60)
-        print("The faces_db folder structure should be:")
-        print("  faces_db/")
-        print("    person_0001/")
-        print("      face_001.npy")
-        print("      face_002.npy")
-        print("    person_0002/")
-        print("      face_001.npy")
+        print("Please ensure your faces_db folder has images or .npy files")
         print("="*60)
 
 
