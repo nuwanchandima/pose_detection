@@ -2,8 +2,8 @@
   "apps": [
     {
       "name": "video-clip-manager",
-      "script": "/var/www/spera_AI/6_pose/.venv/bin/python",
-      "args": "video_clip_manager.py",
+      "script": "uv",
+      "args": "run uvicorn video_clip_manager:app --host 0.0.0.0 --port 5000",
       "cwd": "/var/www/spera_AI/6_pose/pose_detection",
       "interpreter": "none",
       "instances": 1,
