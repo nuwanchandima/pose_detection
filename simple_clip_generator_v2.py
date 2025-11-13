@@ -1,16 +1,18 @@
 """
 Simple video clip generator based on face changes.
 Upload video -> Detect face changes -> Create clips with audio
+NO minimum clip length - saves at EVERY face change point
 """
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
+from contextlib import asynccontextmanager
 import subprocess
 import shutil
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -166,7 +168,7 @@ def process_video(video_path: Path) -> List[dict]:
                     # Face changed! Save previous clip
                     clip_length = frame_idx - current_clip_start
                     
-                    # Create clip
+                    # Create clip (no minimum length check)
                     clip_num = len(clips_info) + 1
                     clip_filename = f"clip_{clip_num:03d}.mp4"
                     clip_path = CLIPS_DIR / clip_filename
@@ -204,7 +206,7 @@ def process_video(video_path: Path) -> List[dict]:
             if current_clip_start is not None:
                 clip_length = frame_idx - current_clip_start
                 
-                # Create clip
+                # Create clip (no minimum length check)
                 clip_num = len(clips_info) + 1
                 clip_filename = f"clip_{clip_num:03d}.mp4"
                 clip_path = CLIPS_DIR / clip_filename
@@ -282,30 +284,24 @@ def process_video(video_path: Path) -> List[dict]:
     return clips_info
 
 
-# FastAPI app
-app = FastAPI()
-
-# Mount static directories
-app.mount("/clips", StaticFiles(directory=CLIPS_DIR), name="clips")
-# Mount static directories
-app.mount("/clips", StaticFiles(directory=CLIPS_DIR), name="clips")
-templates = Jinja2Templates(directory="templates")
-
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Load face recognition model on startup."""
     global face_app
     print("[Startup] Loading InsightFace model...")
     face_app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
     face_app.prepare(ctx_id=-1, det_size=(640, 640))
     print("[Startup] Model loaded successfully")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
+    yield
     print("[Shutdown] Cleaning up...")
+
+
+# FastAPI app
+app = FastAPI(lifespan=lifespan)
+
+# Mount static directories
+app.mount("/clips", StaticFiles(directory=CLIPS_DIR), name="clips")
+templates = Jinja2Templates(directory="templates")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -356,4 +352,4 @@ async def clips_list():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("simple_clip_generator:app", host="0.0.0.0", port=5000, reload=True)
+    uvicorn.run("simple_clip_generator_v2:app", host="0.0.0.0", port=5000, reload=True)
