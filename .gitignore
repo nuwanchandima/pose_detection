@@ -16,7 +16,7 @@ faces_db/
 
 # Temporary files
 temp_video.mp4
-*.mp4
+# *.mp4
 *.avi
 *.mov
 
