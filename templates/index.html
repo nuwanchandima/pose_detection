@@ -81,6 +81,14 @@
         {% endif %}
         <div><strong>{{ p.id }}</strong></div>
         <div class="small">{{ p.count }} face images</div>
+        <div class="small">{{ p.appearances }} appearances</div>
+        <div class="small">{{ p.screen_time }}s screen time</div>
+        {% if p.speaker %}
+        <div class="small" style="color: #4ade80;">🎤 {{ p.speaker }}</div>
+        {% endif %}
+        {% if p.clips > 0 %}
+        <div class="small" style="color: #60a5fa;">🎬 {{ p.clips }} video clips</div>
+        {% endif %}
       </div>
     {% endfor %}
   </div>

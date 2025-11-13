@@ -4,4 +4,17 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "insightface",
+    "opencv-python-headless",
+    "numpy",
+    "jinja2",
+    "python-multipart",
+    "onnxruntime",
+    "librosa",
+    "soundfile",
+    "pyannote-audio",
+    "torch",
+]

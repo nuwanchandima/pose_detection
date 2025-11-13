@@ -14,11 +14,22 @@ build/
 # Face database
 faces_db/
 
+# Audio segments
+audio_segments/
+
+# Person clips
+person_clips/
+
+# Results
+analysis_results.json
+
 # Temporary files
 temp_video.mp4
+temp_audio.wav
 *.mp4
 *.avi
 *.mov
+*.wav
 
 # IDE
 .vscode/

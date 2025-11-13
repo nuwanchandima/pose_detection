@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from contextlib import asynccontextmanager
+import json
+from datetime import timedelta
 
 import cv2
 import numpy as np
@@ -10,9 +12,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
 from insightface.app import FaceAnalysis
+import librosa
+import soundfile as sf
+from pyannote.audio import Pipeline
+import torch
 
 FACES_ROOT = Path("faces_db")
 FACES_ROOT.mkdir(exist_ok=True)
+
+AUDIO_ROOT = Path("audio_segments")
+AUDIO_ROOT.mkdir(exist_ok=True)
+
+CLIPS_ROOT = Path("person_clips")
+CLIPS_ROOT.mkdir(exist_ok=True)
+
+RESULTS_FILE = Path("analysis_results.json")
 
 # --------- Face DB in memory ---------
 # structure:
@@ -34,12 +48,176 @@ MAX_FRAMES_LOST = 15  # Max frames to keep track without detection
 
 # --------- Face Analysis Model ---------
 face_app = None
+speaker_pipeline = None
+
+
+def format_timestamp(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS.mmm format."""
+    td = timedelta(seconds=seconds)
+    hours = td.seconds // 3600
+    minutes = (td.seconds % 3600) // 60
+    secs = td.seconds % 60
+    millisecs = td.microseconds // 1000
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millisecs:03d}"
+
+
+def extract_audio_from_video(video_path: Path, output_path: Path) -> bool:
+    """Extract audio from video file using librosa."""
+    try:
+        import subprocess
+        # Use ffmpeg to extract audio
+        cmd = [
+            'ffmpeg', '-i', str(video_path),
+            '-vn', '-acodec', 'pcm_s16le',
+            '-ar', '16000', '-ac', '1',
+            str(output_path), '-y'
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"[Audio] Failed to extract audio: {e}")
+        return False
+
+
+def extract_audio_segment(audio_path: Path, start_sec: float, end_sec: float, output_path: Path):
+    """Extract audio segment for specific time range."""
+    try:
+        audio, sr = librosa.load(str(audio_path), sr=16000)
+        start_sample = int(start_sec * sr)
+        end_sample = int(end_sec * sr)
+        segment = audio[start_sample:end_sample]
+        sf.write(str(output_path), segment, sr)
+        return True
+    except Exception as e:
+        print(f"[Audio] Failed to extract segment: {e}")
+        return False
+
+
+def identify_speakers(audio_path: Path) -> List[Dict]:
+    """Identify unique speakers using pyannote.audio."""
+    global speaker_pipeline
+    try:
+        if speaker_pipeline is None:
+            return []
+        
+        diarization = speaker_pipeline(str(audio_path))
+        
+        speakers = []
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            speakers.append({
+                "speaker": speaker,
+                "start": turn.start,
+                "end": turn.end,
+                "duration": turn.end - turn.start
+            })
+        
+        return speakers
+    except Exception as e:
+        print(f"[Speaker] Diarization failed: {e}")
+        return []
+
+
+def map_speakers_to_persons(person_periods: Dict[str, List[Dict]]) -> Dict[str, str]:
+    """
+    Map speakers to persons based on who talks most during each person's screen time.
+    Returns: {person_id: speaker_id}
+    """
+    person_to_speaker = {}
+    
+    for person_id, periods in person_periods.items():
+        # Count speaking time for each speaker during this person's periods
+        speaker_durations = {}
+        
+        for period in periods:
+            if "speakers" in period:
+                for speaker_info in period["speakers"]:
+                    speaker_id = speaker_info["speaker"]
+                    duration = speaker_info["duration"]
+                    
+                    if speaker_id not in speaker_durations:
+                        speaker_durations[speaker_id] = 0.0
+                    speaker_durations[speaker_id] += duration
+        
+        # Find the speaker who talks most during this person's screen time
+        if speaker_durations:
+            most_talkative_speaker = max(speaker_durations.items(), key=lambda x: x[1])
+            person_to_speaker[person_id] = most_talkative_speaker[0]
+            print(f"[Mapping] {person_id} → {most_talkative_speaker[0]} (spoke {most_talkative_speaker[1]:.1f}s)")
+        else:
+            person_to_speaker[person_id] = None
+            print(f"[Mapping] {person_id} → No speaker detected")
+    
+    return person_to_speaker
+
+
+def create_person_clips(video_path: Path, person_id: str, periods: List[Dict], 
+                       speaker_id: str, output_dir: Path):
+    """
+    Create video clips for a person containing only frames where they appear
+    and audio segments where their assigned speaker is talking.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    for idx, period in enumerate(periods):
+        if "speakers" not in period or "audio_file" not in period:
+            continue
+        
+        # Filter speakers to only include the assigned speaker
+        person_speaking_segments = [
+            s for s in period["speakers"] 
+            if s["speaker"] == speaker_id
+        ]
+        
+        if not person_speaking_segments:
+            print(f"[Clip] Skipping {person_id} segment {idx+1} - assigned speaker not talking")
+            continue
+        
+        # Create clip for each speaking segment
+        for seg_idx, speaking in enumerate(person_speaking_segments):
+            # Calculate absolute timestamps in the video
+            segment_start = period["start_time_sec"]
+            speaker_start = segment_start + speaking["start"]
+            speaker_end = segment_start + speaking["end"]
+            
+            output_filename = f"{person_id}_clip_{idx+1:03d}_{seg_idx+1:02d}.mp4"
+            output_path = output_dir / output_filename
+            
+            # Use ffmpeg to extract video clip with audio
+            try:
+                import subprocess
+                cmd = [
+                    'ffmpeg',
+                    '-i', str(video_path),
+                    '-ss', str(speaker_start),
+                    '-to', str(speaker_end),
+                    '-c:v', 'libx264',
+                    '-c:a', 'aac',
+                    '-y',
+                    str(output_path)
+                ]
+                subprocess.run(cmd, check=True, capture_output=True)
+                
+                print(f"[Clip] Created {output_filename} ({speaking['duration']:.1f}s)")
+                
+                # Add to period data
+                if "clips" not in period:
+                    period["clips"] = []
+                period["clips"].append({
+                    "filename": output_filename,
+                    "start_time": format_timestamp(speaker_start),
+                    "end_time": format_timestamp(speaker_end),
+                    "duration": round(speaking["duration"], 2)
+                })
+                
+            except Exception as e:
+                print(f"[Clip] Failed to create clip: {e}")
+                continue
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown."""
-    global face_app
+    global face_app, speaker_pipeline
     
     # Startup
     print("[FaceApp] Loading InsightFace (RetinaFace + ArcFace)...")
@@ -49,6 +227,21 @@ async def lifespan(app: FastAPI):
     )
     face_app.prepare(ctx_id=0, det_size=(640, 640))
     print("[FaceApp] Model loaded.")
+    
+    # Load speaker diarization model
+    print("[Speaker] Loading speaker diarization model...")
+    try:
+        speaker_pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            use_auth_token=None  # Add your HuggingFace token if needed
+        )
+        if torch.cuda.is_available():
+            speaker_pipeline.to(torch.device("cuda"))
+        print("[Speaker] Model loaded.")
+    except Exception as e:
+        print(f"[Speaker] Failed to load model: {e}")
+        print("[Speaker] Speaker diarization will be disabled.")
+        speaker_pipeline = None
     
     # Rebuild person_db from existing folders
     print("[FaceApp] Rebuilding person_db from folders...")
@@ -261,7 +454,7 @@ async def process_video(
     sim_threshold: float = Form(0.47)
 ):
     """
-    Upload a video, run face clustering with tracking, then show updated persons page.
+    Upload a video, run face clustering with tracking, extract audio segments, and identify speakers.
     Only processes frames with exactly 1 face.
     """
     global active_tracks, next_track_id
@@ -275,77 +468,217 @@ async def process_video(
     with open(temp_video_path, "wb") as f:
         f.write(await video_file.read())
 
+    # Extract full audio from video
+    temp_audio_path = Path("temp_audio.wav")
+    audio_extracted = extract_audio_from_video(temp_video_path, temp_audio_path)
+
     cap = cv2.VideoCapture(str(temp_video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
     frame_idx = 0
     detected_count = 0
     rejected_count = 0
     skipped_no_face = 0
     skipped_multiple_faces = 0
+    
+    # Track face appearance periods: person_id -> list of (start_frame, end_frame, start_sec, end_sec)
+    person_periods: Dict[str, List[Dict]] = {}
+    current_person = None
+    period_start_frame = None
+    period_start_sec = None
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame_idx += 1
+        current_time_sec = frame_idx / fps
 
         # BGR image → faces (detect all faces in frame)
         faces = face_app.get(frame)
         
-        # Skip frames with no faces
+        # Determine if we have exactly 1 face
+        has_single_face = len(faces) == 1
+        person_in_frame = None
+        
         if len(faces) == 0:
             skipped_no_face += 1
-            continue
-        
-        # Skip frames with 2 or more faces
-        if len(faces) >= 2:
+        elif len(faces) >= 2:
             skipped_multiple_faces += 1
-            continue
-        
-        # Process only if exactly 1 face
-        face = faces[0]
-        emb = face.normed_embedding
-        det_score = float(face.det_score) if hasattr(face, 'det_score') else 1.0
-        x1, y1, x2, y2 = [int(v) for v in face.bbox]
-        
-        # clamp bbox
-        h, w, _ = frame.shape
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(w, x2)
-        y2 = min(h, y2)
-        face_img = frame[y1:y2, x1:x2]
-
-        if face_img.size == 0:
-            continue
-
-        # Calculate bbox area
-        bbox_area = (x2 - x1) * (y2 - y1)
-        
-        # Quality check - skip low quality faces
-        if not is_good_quality_face(face_img, bbox_area, det_score):
-            rejected_count += 1
-            continue
-
-        emb = np.array(emb, dtype=np.float32)
-        bbox = [x1, y1, x2, y2]
-
-        # Try to match with existing persons by embedding
-        person_id, sim = best_match(emb, threshold=sim_threshold)
-        
-        if person_id is None:
-            # Completely new person
-            person_id = register_new_person(emb, face_img)
-            print(f"[FaceApp] Frame {frame_idx}: New person {person_id} (sim={sim:.3f})")
         else:
-            # Matched to existing person by embedding
-            save_face_image(person_id, emb, face_img)
-            print(f"[FaceApp] Frame {frame_idx}: Matched {person_id} (sim={sim:.3f})")
+            # Process the single face
+            face = faces[0]
+            emb = face.normed_embedding
+            det_score = float(face.det_score) if hasattr(face, 'det_score') else 1.0
+            x1, y1, x2, y2 = [int(v) for v in face.bbox]
+            
+            # clamp bbox
+            h, w, _ = frame.shape
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(w, x2)
+            y2 = min(h, y2)
+            face_img = frame[y1:y2, x1:x2]
+
+            if face_img.size > 0:
+                bbox_area = (x2 - x1) * (y2 - y1)
+                
+                # Quality check
+                if is_good_quality_face(face_img, bbox_area, det_score):
+                    emb = np.array(emb, dtype=np.float32)
+                    
+                    # Match with existing persons
+                    person_id, sim = best_match(emb, threshold=sim_threshold)
+                    
+                    if person_id is None:
+                        # New person
+                        person_id = register_new_person(emb, face_img)
+                        person_periods[person_id] = []
+                        print(f"[FaceApp] Frame {frame_idx}: New person {person_id}")
+                    else:
+                        # Existing person
+                        save_face_image(person_id, emb, face_img)
+                    
+                    person_in_frame = person_id
+                    detected_count += 1
+                else:
+                    rejected_count += 1
         
-        detected_count += 1
+        # Track continuous periods for each person
+        if person_in_frame != current_person:
+            # Person changed or disappeared
+            if current_person is not None and period_start_frame is not None:
+                # End the previous period
+                period_end_frame = frame_idx - 1
+                period_end_sec = period_end_frame / fps
+                
+                person_periods[current_person].append({
+                    "start_frame": period_start_frame,
+                    "end_frame": period_end_frame,
+                    "start_time": period_start_sec,
+                    "end_time": period_end_sec,
+                    "duration": period_end_sec - period_start_sec
+                })
+                print(f"[Period] {current_person}: {format_timestamp(period_start_sec)} - {format_timestamp(period_end_sec)}")
+            
+            # Start new period if there's a person
+            if person_in_frame is not None:
+                current_person = person_in_frame
+                period_start_frame = frame_idx
+                period_start_sec = current_time_sec
+            else:
+                current_person = None
+                period_start_frame = None
+                period_start_sec = None
+        
+        frame_idx += 1
+
+    # Close the last period if any
+    if current_person is not None and period_start_frame is not None:
+        period_end_frame = frame_idx - 1
+        period_end_sec = period_end_frame / fps
+        person_periods[current_person].append({
+            "start_frame": period_start_frame,
+            "end_frame": period_end_frame,
+            "start_time": period_start_sec,
+            "end_time": period_end_sec,
+            "duration": period_end_sec - period_start_sec
+        })
 
     cap.release()
+    
+    # Process audio segments and speaker identification
+    results = {
+        "video_info": {
+            "total_frames": frame_idx,
+            "fps": fps,
+            "duration": frame_idx / fps
+        },
+        "statistics": {
+            "frames_no_face": skipped_no_face,
+            "frames_multiple_faces": skipped_multiple_faces,
+            "frames_single_face": detected_count + rejected_count,
+            "good_quality_faces": detected_count,
+            "low_quality_rejected": rejected_count
+        },
+        "persons": []
+    }
+    
+    # Extract audio segments for each person's periods
+    person_periods_with_audio = {}
+    
+    if audio_extracted and temp_audio_path.exists():
+        print("[Audio] Extracting audio segments for each person...")
+        
+        for person_id, periods in person_periods.items():
+            person_periods_with_audio[person_id] = []
+            
+            for idx, period in enumerate(periods):
+                # Extract audio segment
+                audio_filename = f"{person_id}_segment_{idx+1:03d}.wav"
+                audio_path = AUDIO_ROOT / audio_filename
+                
+                success = extract_audio_segment(
+                    temp_audio_path,
+                    period["start_time"],
+                    period["end_time"],
+                    audio_path
+                )
+                
+                period_data = {
+                    "segment_id": idx + 1,
+                    "start_time": format_timestamp(period["start_time"]),
+                    "end_time": format_timestamp(period["end_time"]),
+                    "start_time_sec": period["start_time"],
+                    "end_time_sec": period["end_time"],
+                    "duration": round(period["duration"], 2),
+                    "start_frame": period["start_frame"],
+                    "end_frame": period["end_frame"]
+                }
+                
+                if success:
+                    period_data["audio_file"] = audio_filename
+                    
+                    # Identify speakers in this segment
+                    speakers = identify_speakers(audio_path)
+                    if speakers:
+                        period_data["speakers"] = speakers
+                
+                person_periods_with_audio[person_id].append(period_data)
+        
+        # Map speakers to persons based on speaking time
+        print("[Mapping] Mapping speakers to persons...")
+        speaker_mapping = map_speakers_to_persons(person_periods_with_audio)
+        
+        # Create video clips with person's own voice only
+        print("[Clips] Creating video clips with matched voice...")
+        for person_id, periods in person_periods_with_audio.items():
+            assigned_speaker = speaker_mapping.get(person_id)
+            if assigned_speaker:
+                person_clip_dir = CLIPS_ROOT / person_id
+                create_person_clips(temp_video_path, person_id, periods, 
+                                  assigned_speaker, person_clip_dir)
+        
+        # Build results with all information
+        for person_id, periods in person_periods_with_audio.items():
+            person_data = {
+                "person_id": person_id,
+                "assigned_speaker": speaker_mapping.get(person_id),
+                "total_appearances": len(periods),
+                "total_screen_time": sum(p["duration"] for p in periods),
+                "periods": periods
+            }
+            results["persons"].append(person_data)
+    
+    # Save results to JSON
+    with open(RESULTS_FILE, "w") as f:
+        json.dump(results, f, indent=2)
+    
+    print(f"[Results] Saved to {RESULTS_FILE}")
+    
+    # Cleanup
     temp_video_path.unlink(missing_ok=True)
+    temp_audio_path.unlink(missing_ok=True)
     
     total_frames = frame_idx
     print(f"[FaceApp] Processing complete:")
@@ -362,10 +695,28 @@ async def process_video(
         folder: Path = info["folder"]
         images = sorted(list(folder.glob("*.jpg")) + list(folder.glob("*.png")))
         sample = images[0].name if images else None
+        
+        # Get statistics from results
+        person_stats = next((p for p in results["persons"] if p["person_id"] == pid), None)
+        appearances = person_stats["total_appearances"] if person_stats else 0
+        screen_time = person_stats["total_screen_time"] if person_stats else 0
+        speaker = person_stats["assigned_speaker"] if person_stats else None
+        
+        # Count clips
+        clip_count = 0
+        if person_stats and "periods" in person_stats:
+            for period in person_stats["periods"]:
+                if "clips" in period:
+                    clip_count += len(period["clips"])
+        
         persons_view.append({
             "id": pid,
             "sample_image": sample,
             "count": len(images),
+            "appearances": appearances,
+            "screen_time": round(screen_time, 1),
+            "speaker": speaker,
+            "clips": clip_count
         })
 
     return templates.TemplateResponse(
@@ -373,7 +724,7 @@ async def process_video(
         {
             "request": request,
             "persons": persons_view,
-            "message": f"Processed {total_frames} frames. Found {detected_count} good faces ({skipped_no_face} no-face, {skipped_multiple_faces} multi-face, {rejected_count} low-quality skipped). Discovered {len(persons_view)} unique persons.",
+            "message": f"Processed {total_frames} frames. Found {detected_count} good faces ({skipped_no_face} no-face, {skipped_multiple_faces} multi-face, {rejected_count} low-quality skipped). Discovered {len(persons_view)} unique persons. Results saved to analysis_results.json",
         },
     )
 
