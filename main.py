@@ -151,28 +151,28 @@ def next_person_id() -> str:
 
 def is_good_quality_face(face_img: np.ndarray, bbox_area: float, det_score: float) -> bool:
     """Check if face image has good quality for registration."""
-    # Minimum face size (pixels) - stricter
-    if face_img.shape[0] < 80 or face_img.shape[1] < 80:
+    # Minimum face size (pixels) - moderate
+    if face_img.shape[0] < 60 or face_img.shape[1] < 60:
         return False
     
-    # Detection score threshold - stricter
-    if det_score < 0.8:
+    # Detection score threshold - moderate
+    if det_score < 0.7:
         return False
     
-    # Check blur using Laplacian variance - much stricter
+    # Check blur using Laplacian variance - balanced
     gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
     laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    if laplacian_var < 150:  # Much stricter blur threshold
+    if laplacian_var < 80:  # Balanced blur threshold
         return False
     
-    # Check brightness
+    # Check brightness - wider range
     mean_brightness = gray.mean()
-    if mean_brightness < 40 or mean_brightness > 220:  # Stricter range
+    if mean_brightness < 35 or mean_brightness > 230:
         return False
     
-    # Check contrast
+    # Check contrast - more lenient
     std_brightness = gray.std()
-    if std_brightness < 20:  # Low contrast = poor quality
+    if std_brightness < 15:  # Low contrast = poor quality
         return False
     
     return True
@@ -194,7 +194,7 @@ def register_new_person(embedding: np.ndarray, face_img: np.ndarray) -> str:
     return person_id
 
 
-def best_match(embedding: np.ndarray, threshold: float = 0.5):
+def best_match(embedding: np.ndarray, threshold: float = 0.47):
     """
     Find best matching person for this embedding using cosine similarity.
     All embeddings are assumed L2-normalized (ArcFace).
@@ -258,7 +258,7 @@ async def process_video(
     request: Request,
     video_file: UploadFile = File(...),
     frame_skip: int = Form(5),      # process every Nth frame
-    sim_threshold: float = Form(0.5)
+    sim_threshold: float = Form(0.47)
 ):
     """
     Upload a video, run face clustering with tracking, then show updated persons page.
