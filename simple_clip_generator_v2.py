@@ -288,10 +288,10 @@ def process_video(video_path: Path) -> List[dict]:
 async def lifespan(app: FastAPI):
     """Load face recognition model on startup."""
     global face_app
-    print("[Startup] Loading InsightFace model...")
-    face_app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
-    face_app.prepare(ctx_id=-1, det_size=(640, 640))
-    print("[Startup] Model loaded successfully")
+    print("[Startup] Loading InsightFace model on GPU...")
+    face_app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    face_app.prepare(ctx_id=0, det_size=(640, 640))  # ctx_id=0 for GPU
+    print("[Startup] Model loaded successfully on GPU")
     yield
     print("[Shutdown] Cleaning up...")
 
