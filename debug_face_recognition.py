@@ -42,19 +42,43 @@ def load_face_database():
         person_id = person_folder.name
         embeddings = []
         
+        # Debug: Show folder contents
+        all_files = list(person_folder.glob("*"))
+        npy_files = list(person_folder.glob("*.npy"))
+        print(f"  - Checking {person_id}: {len(all_files)} total files, {len(npy_files)} .npy files")
+        
         # Load all .npy embeddings for this person
-        for emb_file in person_folder.glob("*.npy"):
-            emb = np.load(emb_file)
-            embeddings.append(emb)
+        for emb_file in npy_files:
+            try:
+                emb = np.load(emb_file)
+                embeddings.append(emb)
+                print(f"    * Loaded {emb_file.name}: shape {emb.shape}")
+            except Exception as e:
+                print(f"    * ERROR loading {emb_file.name}: {e}")
         
         if embeddings:
             person_db[person_id] = {
                 "embeddings": embeddings,
                 "folder": person_folder
             }
-            print(f"  - Loaded {person_id}: {len(embeddings)} embeddings")
+            print(f"  ✓ Loaded {person_id}: {len(embeddings)} embeddings")
+        else:
+            print(f"  ✗ No valid embeddings found for {person_id}")
     
     print(f"[INFO] Face database loaded with {len(person_db)} persons")
+    
+    if not person_db:
+        print("\n" + "="*60)
+        print("WARNING: No embeddings loaded!")
+        print("="*60)
+        print("The faces_db folder structure should be:")
+        print("  faces_db/")
+        print("    person_0001/")
+        print("      face_001.npy")
+        print("      face_002.npy")
+        print("    person_0002/")
+        print("      face_001.npy")
+        print("="*60)
 
 
 def compute_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
@@ -115,7 +139,12 @@ def process_video_with_debug():
     load_face_database()
     
     if not person_db:
-        print("[ERROR] No faces in database. Please add faces first!")
+        print("\n[ERROR] No faces in database. Please add faces first!")
+        print("\nTo add faces to the database:")
+        print("1. Use the web interface at http://localhost:5000")
+        print("2. Upload a video and use 'Add New Person' feature")
+        print("3. Or manually create faces_db/person_XXXX/*.npy files")
+        print("\nAlternatively, check if faces_db folder has the correct structure.")
         return
     
     # Open input video
