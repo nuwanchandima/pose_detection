@@ -134,6 +134,24 @@
             transform: scale(1.02);
         }
 
+        .delete-clip-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+            margin-top: 10px;
+            transition: all 0.2s;
+        }
+
+        .delete-clip-btn:hover {
+            background: #c82333;
+            transform: scale(1.02);
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -211,6 +229,9 @@
                     <a href="/{{ clip.clip_path }}" download="{{ clip.clip_name }}" class="download-btn">
                         ⬇️ Download Clip
                     </a>
+                    <button class="delete-clip-btn" onclick="deleteClip('{{ task.task_id }}', '{{ clip.clip_name }}', {{ loop.index }})">
+                        🗑️ Delete Clip
+                    </button>
                 </div>
                 {% endfor %}
             </div>
@@ -223,5 +244,30 @@
             {% endif %}
         </div>
     </div>
+
+    <script>
+        async function deleteClip(taskId, clipName, clipNumber) {
+            if (!confirm(`Are you sure you want to delete Clip ${clipNumber}?\n\nThis action cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/tasks/${taskId}/clips/${clipName}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`✅ Clip deleted successfully`);
+                    location.reload();
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                alert(`❌ Error: ${error.message}`);
+            }
+        }
+    </script>
 </body>
 </html>

@@ -392,6 +392,95 @@ async def view_task_clips(request: Request, task_id: str):
     })
 
 
+@app.delete("/tasks/{task_id}")
+async def delete_task(task_id: str):
+    """Delete a task and all its clips."""
+    try:
+        if task_id not in tasks:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        
+        task = tasks[task_id]
+        
+        # Delete video file
+        video_path = Path(task["video_path"])
+        if video_path.exists():
+            video_path.unlink()
+        
+        # Delete clips directory
+        task_clips_dir = CLIPS_DIR / task_id
+        if task_clips_dir.exists():
+            shutil.rmtree(task_clips_dir)
+        
+        # Delete task state file
+        task_file = TASKS_DIR / f"{task_id}.json"
+        if task_file.exists():
+            task_file.unlink()
+        
+        # Remove from memory
+        del tasks[task_id]
+        
+        print(f"[Delete] Task {task_id} deleted successfully")
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Task and all clips deleted successfully"
+        })
+    
+    except Exception as e:
+        print(f"[Error] Delete task failed: {e}")
+        return JSONResponse({
+            "success": False,
+            "message": str(e)
+        }, status_code=500)
+
+
+@app.delete("/tasks/{task_id}/clips/{clip_name}")
+async def delete_clip(task_id: str, clip_name: str):
+    """Delete a specific clip from a task."""
+    try:
+        if task_id not in tasks:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        
+        task = tasks[task_id]
+        
+        # Find and remove clip from task clips list
+        clip_found = False
+        for i, clip in enumerate(task["clips"]):
+            if clip["clip_name"] == clip_name:
+                clip_found = True
+                task["clips"].pop(i)
+                break
+        
+        if not clip_found:
+            return JSONResponse({"error": "Clip not found"}, status_code=404)
+        
+        # Delete clip file
+        clip_path = CLIPS_DIR / task_id / clip_name
+        if clip_path.exists():
+            clip_path.unlink()
+        
+        # Update clips count
+        task["clips_count"] = len(task["clips"])
+        
+        # Save updated task state
+        save_task_state(task_id)
+        
+        print(f"[Delete] Clip {clip_name} from task {task_id} deleted successfully")
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Clip deleted successfully",
+            "clips_count": task["clips_count"]
+        })
+    
+    except Exception as e:
+        print(f"[Error] Delete clip failed: {e}")
+        return JSONResponse({
+            "success": False,
+            "message": str(e)
+        }, status_code=500)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("video_clip_manager:app", host="0.0.0.0", port=5000, reload=True)

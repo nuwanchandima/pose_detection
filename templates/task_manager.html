@@ -227,6 +227,22 @@
             cursor: not-allowed;
         }
 
+        .delete-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .delete-btn:hover {
+            background: #c82333;
+            transform: scale(1.05);
+        }
+
         .alert {
             padding: 15px;
             border-radius: 8px;
@@ -437,6 +453,9 @@
                                         ${task.status === 'processing' ? '⏳ Processing...' : '⏱️ Waiting...'}
                                     </button>`
                                 }
+                                <button class="delete-btn" onclick="deleteTask('${task.task_id}', '${task.video_name}')">
+                                    🗑️ Delete
+                                </button>
                             </div>
                         </div>
                     `).join('')}
@@ -464,6 +483,29 @@
 
         // Auto-refresh tasks every 5 seconds
         setInterval(loadTasks, 5000);
+
+        async function deleteTask(taskId, videoName) {
+            if (!confirm(`Are you sure you want to delete "${videoName}"?\n\nThis will delete:\n- The task\n- All clips\n- Original video\n\nThis action cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/tasks/${taskId}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showAlert(`✅ Task deleted successfully`, 'success');
+                    loadTasks();
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                showAlert(`❌ Error: ${error.message}`, 'error');
+            }
+        }
     </script>
 </body>
 </html>
