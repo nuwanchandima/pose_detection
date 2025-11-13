@@ -149,6 +149,30 @@ def next_person_id() -> str:
     return f"person_{(max(nums) + 1):04d}" if nums else "person_0001"
 
 
+def is_good_quality_face(face_img: np.ndarray, bbox_area: float, det_score: float) -> bool:
+    """Check if face image has good quality for registration."""
+    # Minimum face size (pixels)
+    if face_img.shape[0] < 40 or face_img.shape[1] < 40:
+        return False
+    
+    # Detection score threshold
+    if det_score < 0.6:
+        return False
+    
+    # Check blur using Laplacian variance
+    gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    if laplacian_var < 50:  # Too blurry
+        return False
+    
+    # Check brightness
+    mean_brightness = gray.mean()
+    if mean_brightness < 30 or mean_brightness > 225:  # Too dark or too bright
+        return False
+    
+    return True
+
+
 def register_new_person(embedding: np.ndarray, face_img: np.ndarray) -> str:
     person_id = next_person_id()
     person_folder = FACES_ROOT / person_id
@@ -165,7 +189,7 @@ def register_new_person(embedding: np.ndarray, face_img: np.ndarray) -> str:
     return person_id
 
 
-def best_match(embedding: np.ndarray, threshold: float = 0.4):
+def best_match(embedding: np.ndarray, threshold: float = 0.45):
     """
     Find best matching person for this embedding using cosine similarity.
     All embeddings are assumed L2-normalized (ArcFace).
@@ -229,7 +253,7 @@ async def process_video(
     request: Request,
     video_file: UploadFile = File(...),
     frame_skip: int = Form(5),      # process every Nth frame
-    sim_threshold: float = Form(0.4)
+    sim_threshold: float = Form(0.45)
 ):
     """
     Upload a video, run face clustering with tracking, then show updated persons page.
@@ -248,6 +272,7 @@ async def process_video(
     cap = cv2.VideoCapture(str(temp_video_path))
     frame_idx = 0
     detected_count = 0
+    rejected_count = 0
 
     while True:
         ret, frame = cap.read()
@@ -268,6 +293,7 @@ async def process_video(
         
         for face in faces:
             emb = face.normed_embedding
+            det_score = float(face.det_score) if hasattr(face, 'det_score') else 1.0
             x1, y1, x2, y2 = [int(v) for v in face.bbox]
             # clamp bbox
             h, w, _ = frame.shape
@@ -278,6 +304,14 @@ async def process_video(
             face_img = frame[y1:y2, x1:x2]
 
             if face_img.size == 0:
+                continue
+
+            # Calculate bbox area
+            bbox_area = (x2 - x1) * (y2 - y1)
+            
+            # Quality check - skip low quality faces
+            if not is_good_quality_face(face_img, bbox_area, det_score):
+                rejected_count += 1
                 continue
 
             emb = np.array(emb, dtype=np.float32)
@@ -293,7 +327,7 @@ async def process_video(
                 matched_tracks.add(track_id)
                 person_id = active_tracks[track_id]["person_id"]
                 
-                # Save face to existing person
+                # Save face to existing person (only if good quality)
                 save_face_image(person_id, emb, face_img)
                 print(f"[FaceApp] Track {track_id} -> {person_id} (continued)")
                 detected_count += 1
@@ -324,7 +358,7 @@ async def process_video(
 
     cap.release()
     temp_video_path.unlink(missing_ok=True)
-    print(f"[FaceApp] Processed video. Detected faces: {detected_count}")
+    print(f"[FaceApp] Processed video. Detected: {detected_count}, Rejected low quality: {rejected_count}")
 
     # Reload persons view
     persons_view = []
@@ -343,7 +377,7 @@ async def process_video(
         {
             "request": request,
             "persons": persons_view,
-            "message": f"Processed video. Detected {detected_count} faces.",
+            "message": f"Processed video. Detected {detected_count} faces ({rejected_count} low quality rejected). Found {len(persons_view)} unique persons.",
         },
     )
 
