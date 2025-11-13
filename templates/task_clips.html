@@ -152,6 +152,53 @@
             transform: scale(1.02);
         }
 
+        .process-llm-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+            margin-top: 10px;
+            transition: all 0.2s;
+        }
+
+        .process-llm-btn:hover {
+            background: #0056b3;
+            transform: scale(1.02);
+        }
+
+        .process-llm-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .llm-result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .llm-result.show {
+            display: block;
+        }
+
+        .llm-result pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 12px;
+            color: #333;
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -229,9 +276,15 @@
                     <a href="/{{ clip.clip_path }}" download="{{ clip.clip_name }}" class="download-btn">
                         ⬇️ Download Clip
                     </a>
+                    <button class="process-llm-btn" id="llm-btn-{{ loop.index }}" onclick="processWithLLM('{{ task.task_id }}', '{{ clip.clip_name }}', {{ loop.index }})">
+                        🤖 Process by LLM
+                    </button>
                     <button class="delete-clip-btn" onclick="deleteClip('{{ task.task_id }}', '{{ clip.clip_name }}', {{ loop.index }})">
                         🗑️ Delete Clip
                     </button>
+                    <div class="llm-result" id="llm-result-{{ loop.index }}">
+                        <pre id="llm-json-{{ loop.index }}"></pre>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
@@ -246,6 +299,38 @@
     </div>
 
     <script>
+        async function processWithLLM(taskId, clipName, clipNumber) {
+            const btn = document.getElementById(`llm-btn-${clipNumber}`);
+            const resultDiv = document.getElementById(`llm-result-${clipNumber}`);
+            const jsonPre = document.getElementById(`llm-json-${clipNumber}`);
+            
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.textContent = '⏳ Processing...';
+            resultDiv.classList.remove('show');
+            
+            try {
+                const response = await fetch(`/tasks/${taskId}/clips/${clipName}/process-llm`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                // Display JSON result
+                jsonPre.textContent = JSON.stringify(result, null, 2);
+                resultDiv.classList.add('show');
+                
+                // Re-enable button
+                btn.disabled = false;
+                btn.textContent = '🤖 Process by LLM';
+                
+            } catch (error) {
+                alert(`❌ Error: ${error.message}`);
+                btn.disabled = false;
+                btn.textContent = '🤖 Process by LLM';
+            }
+        }
+
         async function deleteClip(taskId, clipName, clipNumber) {
             if (!confirm(`Are you sure you want to delete Clip ${clipNumber}?\n\nThis action cannot be undone.`)) {
                 return;

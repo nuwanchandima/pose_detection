@@ -434,6 +434,60 @@ async def delete_task(task_id: str):
         }, status_code=500)
 
 
+@app.post("/tasks/{task_id}/clips/{clip_name}/process-llm")
+async def process_clip_with_llm(task_id: str, clip_name: str):
+    """Process a clip with LLM (dummy implementation for now)."""
+    try:
+        if task_id not in tasks:
+            return JSONResponse({"error": "Task not found"}, status_code=404)
+        
+        task = tasks[task_id]
+        
+        # Find clip
+        clip_info = None
+        for clip in task["clips"]:
+            if clip["clip_name"] == clip_name:
+                clip_info = clip
+                break
+        
+        if not clip_info:
+            return JSONResponse({"error": "Clip not found"}, status_code=404)
+        
+        # Dummy LLM response
+        dummy_response = {
+            "success": True,
+            "task_id": task_id,
+            "clip_name": clip_name,
+            "analysis": {
+                "video_duration": clip_info.get("duration", "unknown"),
+                "frame_count": clip_info.get("frames", 0),
+                "detected_objects": ["person", "face", "background"],
+                "scene_type": "indoor",
+                "confidence_score": 0.92,
+                "description": "This is a sample LLM analysis result. The actual processing will be implemented later.",
+                "metadata": {
+                    "model": "dummy-llm-v1",
+                    "processed_at": datetime.now().isoformat(),
+                    "processing_time_ms": 150
+                }
+            },
+            "recommendations": [
+                "Consider enhancing video quality",
+                "Good lighting detected",
+                "Clear face visibility"
+            ]
+        }
+        
+        return JSONResponse(dummy_response)
+        
+    except Exception as e:
+        print(f"[Error] LLM processing failed: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
 @app.delete("/tasks/{task_id}/clips/{clip_name}")
 async def delete_clip(task_id: str, clip_name: str):
     """Delete a specific clip from a task."""
