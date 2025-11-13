@@ -14,7 +14,7 @@ FACES_ROOT = Path("faces_db")
 INPUT_VIDEO = "input_video.mp4"  # Change this to your video path
 OUTPUT_VIDEO = "debug_output.mp4"
 OUTPUT_FRAMES_DIR = Path("debug_frames")  # Directory to save individual frames
-SIMILARITY_THRESHOLD = 0.40  # Adjust this threshold
+SIMILARITY_THRESHOLD = 0.35  # Adjust this threshold (lowered for better matching)
 
 # Create output frames directory
 OUTPUT_FRAMES_DIR.mkdir(exist_ok=True)
@@ -52,7 +52,9 @@ def load_face_database():
         for emb_file in npy_files:
             try:
                 emb = np.load(emb_file)
-                embeddings.append(emb)
+                # Ensure embedding is normalized
+                emb_norm = emb / np.linalg.norm(emb)
+                embeddings.append(emb_norm)
                 print(f"    * Loaded {emb_file.name}: shape {emb.shape}")
             except Exception as e:
                 print(f"    * ERROR loading {emb_file.name}: {e}")
@@ -68,10 +70,12 @@ def load_face_database():
                     faces = face_app.get(img)
                     if faces:
                         emb = faces[0].normed_embedding
-                        embeddings.append(emb)
-                        # Save as .npy for future use
+                        # Ensure normalization
+                        emb_norm = emb / np.linalg.norm(emb)
+                        embeddings.append(emb_norm)
+                        # Save normalized embedding
                         npy_path = img_path.with_suffix('.npy')
-                        np.save(str(npy_path), emb)
+                        np.save(str(npy_path), emb_norm)
                         print(f"    * Extracted and saved {npy_path.name}")
                 except Exception as e:
                     print(f"    * ERROR processing {img_path.name}: {e}")
@@ -110,6 +114,9 @@ def recognize_face(face_embedding: np.ndarray, threshold: float = SIMILARITY_THR
     if not person_db:
         return None, 0.0, {}
     
+    # Ensure input embedding is normalized
+    face_emb_norm = face_embedding / np.linalg.norm(face_embedding)
+    
     best_person = None
     best_sim = -1.0
     all_similarities = {}
@@ -118,7 +125,7 @@ def recognize_face(face_embedding: np.ndarray, threshold: float = SIMILARITY_THR
         person_embeddings = data["embeddings"]
         
         # Compute similarity with all embeddings of this person
-        sims = [compute_similarity(face_embedding, ref_emb) for ref_emb in person_embeddings]
+        sims = [compute_similarity(face_emb_norm, ref_emb) for ref_emb in person_embeddings]
         max_sim = max(sims) if sims else 0.0
         avg_sim = sum(sims) / len(sims) if sims else 0.0
         

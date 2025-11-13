@@ -69,7 +69,9 @@ async def lifespan(app: FastAPI):
             for npy_file in npy_files:
                 try:
                     emb = np.load(str(npy_file))
-                    embeddings.append(emb)
+                    # Ensure embedding is normalized
+                    emb_norm = emb / np.linalg.norm(emb)
+                    embeddings.append(emb_norm)
                 except Exception as e:
                     print(f"[Warning] Failed to load {npy_file}: {e}")
         
@@ -83,10 +85,12 @@ async def lifespan(app: FastAPI):
                 faces = face_app.get(img)
                 if faces:
                     emb = faces[0].normed_embedding
-                    embeddings.append(emb)
-                    # Save as .npy for future faster loading
+                    # Double-check normalization
+                    emb_norm = emb / np.linalg.norm(emb)
+                    embeddings.append(emb_norm)
+                    # Save normalized embedding
                     npy_path = img_path.with_suffix('.npy')
-                    np.save(str(npy_path), emb)
+                    np.save(str(npy_path), emb_norm)
         
         if embeddings:
             person_db[person_folder.name] = {
@@ -262,34 +266,40 @@ def register_new_person(embedding: np.ndarray, face_img: np.ndarray) -> str:
     person_folder = FACES_ROOT / person_id
     person_folder.mkdir(parents=True, exist_ok=True)
 
+    # Ensure embedding is normalized
+    emb_norm = embedding / np.linalg.norm(embedding)
+
     # Save first face image
     img_filename = person_folder / "face_0001.jpg"
     cv2.imwrite(str(img_filename), face_img)
     
-    # Save embedding as .npy file for faster loading
+    # Save normalized embedding as .npy file
     emb_filename = person_folder / "face_0001.npy"
-    np.save(str(emb_filename), embedding)
+    np.save(str(emb_filename), emb_norm)
 
     person_db[person_id] = {
-        "embeddings": [embedding],
+        "embeddings": [emb_norm],
         "folder": person_folder,
     }
     return person_id
 
 
-def best_match(embedding: np.ndarray, threshold: float = 0.47):
+def best_match(embedding: np.ndarray, threshold: float = 0.35):
     """
     Find best matching person for this embedding using cosine similarity.
     All embeddings are assumed L2-normalized (ArcFace).
     Returns (person_id or None, similarity).
     """
+    # Ensure input embedding is normalized
+    emb_norm = embedding / np.linalg.norm(embedding)
+    
     best_id = None
     best_sim = -1.0
     for pid, info in person_db.items():
         # Check against all embeddings, not just average
         embs = info["embeddings"]
         for emb in embs:
-            sim = float(np.dot(emb, embedding))
+            sim = float(np.dot(emb, emb_norm))
             if sim > best_sim:
                 best_sim = sim
                 best_id = pid
@@ -301,15 +311,21 @@ def best_match(embedding: np.ndarray, threshold: float = 0.47):
 
 def save_face_image(person_id: str, embedding: np.ndarray, face_img: np.ndarray):
     """Append new embedding and save image in person's folder."""
+    # Ensure embedding is normalized
+    emb_norm = embedding / np.linalg.norm(embedding)
+    
     info = person_db[person_id]
-    info["embeddings"].append(embedding)
+    info["embeddings"].append(emb_norm)
 
     folder = info["folder"]
     # find next face index
     existing = [f for f in folder.iterdir() if f.is_file() and f.name.startswith("face_")]
     idx = len(existing) + 1
-    filename = folder / f"face_{idx:04d}.jpg"
-    cv2.imwrite(str(filename), face_img)
+    img_filename = folder / f"face_{idx:04d}.jpg"
+    cv2.imwrite(str(img_filename), face_img)
+    # Save normalized embedding
+    emb_filename = folder / f"face_{idx:04d}.npy"
+    np.save(str(emb_filename), emb_norm)
 
 
 # --------- Routes ----------
