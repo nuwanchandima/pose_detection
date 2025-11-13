@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "video-clip-manager",
+      "script": "/var/www/spera_AI/6_pose/.venv/bin/python",
+      "args": "video_clip_manager.py",
+      "cwd": "/var/www/spera_AI/6_pose/pose_detection",
+      "interpreter": "none",
+      "instances": 1,
+      "exec_mode": "fork",
+      "autorestart": true,
+      "watch": false,
+      "max_memory_restart": "2G",
+      "env": {
+        "PYTHONPATH": "/var/www/spera_AI/6_pose/pose_detection",
+        "VIRTUAL_ENV": "/var/www/spera_AI/6_pose/.venv",
+        "PATH": "/var/www/spera_AI/6_pose/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "error_file": "/var/www/spera_AI/6_pose/pose_detection/logs/pm2-error.log",
+      "out_file": "/var/www/spera_AI/6_pose/pose_detection/logs/pm2-out.log",
+      "log_date_format": "YYYY-MM-DD HH:mm:ss Z",
+      "merge_logs": true,
+      "min_uptime": "10s",
+      "max_restarts": 10,
+      "restart_delay": 4000
+    }
+  ]
+}
