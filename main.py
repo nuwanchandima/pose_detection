@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
@@ -12,13 +13,6 @@ from insightface.app import FaceAnalysis
 
 FACES_ROOT = Path("faces_db")
 FACES_ROOT.mkdir(exist_ok=True)
-
-app = FastAPI()
-
-# Mount faces folder as static files (so we can show images in HTML)
-app.mount("/faces", StaticFiles(directory=FACES_ROOT), name="faces")
-
-templates = Jinja2Templates(directory="templates")
 
 # --------- Face DB in memory ---------
 # structure:
@@ -37,6 +31,61 @@ person_db: Dict[str, Dict] = {}
 active_tracks: Dict[int, Dict] = {}
 next_track_id = 0
 MAX_FRAMES_LOST = 15  # Max frames to keep track without detection
+
+# --------- Face Analysis Model ---------
+face_app = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown."""
+    global face_app
+    
+    # Startup
+    print("[FaceApp] Loading InsightFace (RetinaFace + ArcFace)...")
+    face_app = FaceAnalysis(
+        name="buffalo_l",  # buffalo_l (accurate) or buffalo_s (faster on CPU)
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+    face_app.prepare(ctx_id=0, det_size=(640, 640))
+    print("[FaceApp] Model loaded.")
+    
+    # Rebuild person_db from existing folders
+    print("[FaceApp] Rebuilding person_db from folders...")
+    for person_folder in FACES_ROOT.iterdir():
+        if not person_folder.is_dir() or not person_folder.name.startswith("person_"):
+            continue
+        images = list(person_folder.glob("*.jpg")) + list(person_folder.glob("*.png"))
+        if not images:
+            continue
+        img_path = images[0]
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+
+        faces = face_app.get(img)
+        if not faces:
+            continue
+
+        emb = faces[0].normed_embedding
+        person_db[person_folder.name] = {
+            "embeddings": [emb],
+            "folder": person_folder,
+        }
+    print(f"[FaceApp] Loaded {len(person_db)} persons.")
+    
+    yield
+    
+    # Shutdown (cleanup if needed)
+    print("[FaceApp] Shutting down...")
+
+
+app = FastAPI(lifespan=lifespan)
+
+# Mount faces folder as static files (so we can show images in HTML)
+app.mount("/faces", StaticFiles(directory=FACES_ROOT), name="faces")
+
+templates = Jinja2Templates(directory="templates")
 
 
 def iou(box1, box2) -> float:
@@ -149,47 +198,6 @@ def save_face_image(person_id: str, embedding: np.ndarray, face_img: np.ndarray)
     idx = len(existing) + 1
     filename = folder / f"face_{idx:04d}.jpg"
     cv2.imwrite(str(filename), face_img)
-
-
-# --------- Load InsightFace (ArcFace) ----------
-print("[FaceApp] Loading InsightFace (RetinaFace + ArcFace)...")
-face_app = FaceAnalysis(
-    name="buffalo_l",  # includes ArcFace-based recognition model
-    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-)
-face_app.prepare(ctx_id=0, det_size=(640, 640))
-print("[FaceApp] Model loaded.")
-
-
-@app.on_event("startup")
-def startup_event():
-    """
-    On startup, scan any existing person_xxxx folders and
-    compute a single embedding for one image in each folder
-    to rebuild person_db.
-    """
-    print("[FaceApp] Rebuilding person_db from folders...")
-    for person_folder in FACES_ROOT.iterdir():
-        if not person_folder.is_dir() or not person_folder.name.startswith("person_"):
-            continue
-        images = list(person_folder.glob("*.jpg")) + list(person_folder.glob("*.png"))
-        if not images:
-            continue
-        img_path = images[0]
-        img = cv2.imread(str(img_path))
-        if img is None:
-            continue
-
-        faces = face_app.get(img)
-        if not faces:
-            continue
-
-        emb = faces[0].normed_embedding
-        person_db[person_folder.name] = {
-            "embeddings": [emb],
-            "folder": person_folder,
-        }
-    print(f"[FaceApp] Loaded {len(person_db)} persons.")
 
 
 # --------- Routes ----------
