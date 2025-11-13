@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Clips - {{ task.video_name }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .back-btn {
+            display: inline-block;
+            background: #6c757d;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            transition: all 0.2s;
+        }
+
+        .back-btn:hover {
+            background: #5a6268;
+            transform: translateX(-5px);
+        }
+
+        h1 {
+            color: #333;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .task-info {
+            color: #666;
+            line-height: 1.8;
+        }
+
+        .clips-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .section-title {
+            font-size: 1.8em;
+            color: #333;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .clips-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 25px;
+        }
+
+        .clip-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+
+        .clip-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.2);
+        }
+
+        .clip-number {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .clip-details {
+            font-size: 0.9em;
+            color: #666;
+            line-height: 1.8;
+            margin-bottom: 15px;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+        }
+
+        .download-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .download-btn:hover {
+            background: #218838;
+            transform: scale(1.02);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 1em;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="/" class="back-btn">← Back to Tasks</a>
+            <h1>🎬 {{ task.video_name }}</h1>
+            <div class="task-info">
+                <div>📅 Created: {{ task.created_at }}</div>
+                {% if task.completed_at %}
+                <div>✅ Completed: {{ task.completed_at }}</div>
+                {% endif %}
+                <div>🎞️ Total Clips: {{ task.clips_count }}</div>
+            </div>
+        </div>
+
+        <div class="clips-section">
+            {% if task.clips_count > 0 %}
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-value">{{ task.clips_count }}</div>
+                    <div class="stat-label">Total Clips</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{{ task.status }}</div>
+                    <div class="stat-label">Status</div>
+                </div>
+            </div>
+
+            <h2 class="section-title">📂 Clips</h2>
+            
+            <div class="clips-grid">
+                {% for clip in task.clips %}
+                <div class="clip-card">
+                    <div class="clip-number">🎬 Clip {{ loop.index }}</div>
+                    <div class="clip-details">
+                        📊 Frames: {{ clip.start_frame }} - {{ clip.end_frame }} ({{ clip.frames }} frames)<br>
+                        ⏱️ Duration: {{ clip.duration }}
+                    </div>
+                    <video controls>
+                        <source src="/{{ clip.clip_path }}" type="video/mp4">
+                        Your browser does not support video playback.
+                    </video>
+                    <a href="/{{ clip.clip_path }}" download="{{ clip.clip_name }}" class="download-btn">
+                        ⬇️ Download Clip
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <div style="font-size: 4em; margin-bottom: 20px;">📭</div>
+                <h3>No clips available</h3>
+                <p>This task hasn't generated any clips yet.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
