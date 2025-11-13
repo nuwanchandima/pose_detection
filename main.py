@@ -257,11 +257,12 @@ async def index(request: Request):
 async def process_video(
     request: Request,
     video_file: UploadFile = File(...),
-    frame_skip: int = Form(5),      # process every Nth frame
+    frame_skip: int = Form(1),      # process every frame (set to 1)
     sim_threshold: float = Form(0.47)
 ):
     """
     Upload a video, run face clustering with tracking, then show updated persons page.
+    Only processes frames with exactly 1 face.
     """
     global active_tracks, next_track_id
     
@@ -278,92 +279,82 @@ async def process_video(
     frame_idx = 0
     detected_count = 0
     rejected_count = 0
+    skipped_no_face = 0
+    skipped_multiple_faces = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Update all tracks (increment frames_lost)
-        update_tracks()
+        frame_idx += 1
 
-        # Skip frames to speed up
-        if frame_idx % frame_skip != 0:
-            frame_idx += 1
+        # BGR image → faces (detect all faces in frame)
+        faces = face_app.get(frame)
+        
+        # Skip frames with no faces
+        if len(faces) == 0:
+            skipped_no_face += 1
+            continue
+        
+        # Skip frames with 2 or more faces
+        if len(faces) >= 2:
+            skipped_multiple_faces += 1
+            continue
+        
+        # Process only if exactly 1 face
+        face = faces[0]
+        emb = face.normed_embedding
+        det_score = float(face.det_score) if hasattr(face, 'det_score') else 1.0
+        x1, y1, x2, y2 = [int(v) for v in face.bbox]
+        
+        # clamp bbox
+        h, w, _ = frame.shape
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(w, x2)
+        y2 = min(h, y2)
+        face_img = frame[y1:y2, x1:x2]
+
+        if face_img.size == 0:
             continue
 
-        # BGR image → faces
-        faces = face_app.get(frame)
-        matched_tracks = set()
+        # Calculate bbox area
+        bbox_area = (x2 - x1) * (y2 - y1)
         
-        for face in faces:
-            emb = face.normed_embedding
-            det_score = float(face.det_score) if hasattr(face, 'det_score') else 1.0
-            x1, y1, x2, y2 = [int(v) for v in face.bbox]
-            # clamp bbox
-            h, w, _ = frame.shape
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(w, x2)
-            y2 = min(h, y2)
-            face_img = frame[y1:y2, x1:x2]
+        # Quality check - skip low quality faces
+        if not is_good_quality_face(face_img, bbox_area, det_score):
+            rejected_count += 1
+            continue
 
-            if face_img.size == 0:
-                continue
+        emb = np.array(emb, dtype=np.float32)
+        bbox = [x1, y1, x2, y2]
 
-            # Calculate bbox area
-            bbox_area = (x2 - x1) * (y2 - y1)
-            
-            # Quality check - skip low quality faces
-            if not is_good_quality_face(face_img, bbox_area, det_score):
-                rejected_count += 1
-                continue
-
-            emb = np.array(emb, dtype=np.float32)
-            bbox = [x1, y1, x2, y2]
-
-            # Try to match this detection to an existing track
-            track_id = match_detection_to_track(bbox)
-            
-            if track_id is not None:
-                # Update existing track
-                active_tracks[track_id]["bbox"] = bbox
-                active_tracks[track_id]["frames_lost"] = 0
-                matched_tracks.add(track_id)
-                person_id = active_tracks[track_id]["person_id"]
-                
-                # Save face to existing person (only if good quality)
-                save_face_image(person_id, emb, face_img)
-                print(f"[FaceApp] Track {track_id} -> {person_id} (continued)")
-                detected_count += 1
-            else:
-                # New detection - try to match with existing persons by embedding
-                person_id, sim = best_match(emb, threshold=sim_threshold)
-                
-                if person_id is None:
-                    # Completely new person
-                    person_id = register_new_person(emb, face_img)
-                    print(f"[FaceApp] New person: {person_id} (sim={sim:.3f})")
-                else:
-                    # Matched to existing person by embedding
-                    save_face_image(person_id, emb, face_img)
-                    print(f"[FaceApp] Matched {person_id} (sim={sim:.3f})")
-                
-                # Create new track
-                active_tracks[next_track_id] = {
-                    "person_id": person_id,
-                    "bbox": bbox,
-                    "frames_lost": 0
-                }
-                matched_tracks.add(next_track_id)
-                next_track_id += 1
-                detected_count += 1
-
-        frame_idx += 1
+        # Try to match with existing persons by embedding
+        person_id, sim = best_match(emb, threshold=sim_threshold)
+        
+        if person_id is None:
+            # Completely new person
+            person_id = register_new_person(emb, face_img)
+            print(f"[FaceApp] Frame {frame_idx}: New person {person_id} (sim={sim:.3f})")
+        else:
+            # Matched to existing person by embedding
+            save_face_image(person_id, emb, face_img)
+            print(f"[FaceApp] Frame {frame_idx}: Matched {person_id} (sim={sim:.3f})")
+        
+        detected_count += 1
 
     cap.release()
     temp_video_path.unlink(missing_ok=True)
-    print(f"[FaceApp] Processed video. Detected: {detected_count}, Rejected low quality: {rejected_count}")
+    
+    total_frames = frame_idx
+    print(f"[FaceApp] Processing complete:")
+    print(f"  Total frames: {total_frames}")
+    print(f"  Frames with 0 faces: {skipped_no_face}")
+    print(f"  Frames with 2+ faces: {skipped_multiple_faces}")
+    print(f"  Frames with 1 face (processed): {detected_count + rejected_count}")
+    print(f"  Good quality faces saved: {detected_count}")
+    print(f"  Low quality rejected: {rejected_count}")
 
     # Reload persons view
     persons_view = []
@@ -382,7 +373,7 @@ async def process_video(
         {
             "request": request,
             "persons": persons_view,
-            "message": f"Processed video. Detected {detected_count} faces ({rejected_count} low quality rejected). Found {len(persons_view)} unique persons.",
+            "message": f"Processed {total_frames} frames. Found {detected_count} good faces ({skipped_no_face} no-face, {skipped_multiple_faces} multi-face, {rejected_count} low-quality skipped). Discovered {len(persons_view)} unique persons.",
         },
     )
 
