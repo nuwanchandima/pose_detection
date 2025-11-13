@@ -151,23 +151,28 @@ def next_person_id() -> str:
 
 def is_good_quality_face(face_img: np.ndarray, bbox_area: float, det_score: float) -> bool:
     """Check if face image has good quality for registration."""
-    # Minimum face size (pixels)
-    if face_img.shape[0] < 40 or face_img.shape[1] < 40:
+    # Minimum face size (pixels) - stricter
+    if face_img.shape[0] < 80 or face_img.shape[1] < 80:
         return False
     
-    # Detection score threshold
-    if det_score < 0.6:
+    # Detection score threshold - stricter
+    if det_score < 0.8:
         return False
     
-    # Check blur using Laplacian variance
+    # Check blur using Laplacian variance - much stricter
     gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
     laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    if laplacian_var < 50:  # Too blurry
+    if laplacian_var < 150:  # Much stricter blur threshold
         return False
     
     # Check brightness
     mean_brightness = gray.mean()
-    if mean_brightness < 30 or mean_brightness > 225:  # Too dark or too bright
+    if mean_brightness < 40 or mean_brightness > 220:  # Stricter range
+        return False
+    
+    # Check contrast
+    std_brightness = gray.std()
+    if std_brightness < 20:  # Low contrast = poor quality
         return False
     
     return True
@@ -189,7 +194,7 @@ def register_new_person(embedding: np.ndarray, face_img: np.ndarray) -> str:
     return person_id
 
 
-def best_match(embedding: np.ndarray, threshold: float = 0.45):
+def best_match(embedding: np.ndarray, threshold: float = 0.5):
     """
     Find best matching person for this embedding using cosine similarity.
     All embeddings are assumed L2-normalized (ArcFace).
@@ -198,13 +203,13 @@ def best_match(embedding: np.ndarray, threshold: float = 0.45):
     best_id = None
     best_sim = -1.0
     for pid, info in person_db.items():
-        # average embedding for this person
+        # Check against all embeddings, not just average
         embs = info["embeddings"]
-        avg_emb = np.mean(embs, axis=0)
-        sim = float(np.dot(avg_emb, embedding))  # normed embeddings → cosine similarity
-        if sim > best_sim:
-            best_sim = sim
-            best_id = pid
+        for emb in embs:
+            sim = float(np.dot(emb, embedding))
+            if sim > best_sim:
+                best_sim = sim
+                best_id = pid
 
     if best_sim >= threshold:
         return best_id, best_sim
@@ -253,7 +258,7 @@ async def process_video(
     request: Request,
     video_file: UploadFile = File(...),
     frame_skip: int = Form(5),      # process every Nth frame
-    sim_threshold: float = Form(0.45)
+    sim_threshold: float = Form(0.5)
 ):
     """
     Upload a video, run face clustering with tracking, then show updated persons page.
