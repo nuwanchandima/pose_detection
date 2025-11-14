@@ -495,6 +495,15 @@ async def delete_task(task_id: str):
         if task_clips_dir.exists():
             shutil.rmtree(task_clips_dir)
         
+        # Delete all clips from all_clips folder that belong to this task
+        if ALL_CLIPS_DIR.exists():
+            for clip_file in ALL_CLIPS_DIR.glob(f"{task_id}_*.mp4"):
+                try:
+                    clip_file.unlink()
+                    print(f"[Delete] Removed {clip_file.name} from all_clips")
+                except Exception as e:
+                    print(f"[Error] Failed to delete {clip_file.name}: {e}")
+        
         # Delete task state file
         task_file = TASKS_DIR / f"{task_id}.json"
         if task_file.exists():
@@ -607,10 +616,17 @@ async def delete_clip(task_id: str, clip_name: str):
         if not clip_found:
             return JSONResponse({"error": "Clip not found"}, status_code=404)
         
-        # Delete clip file
+        # Delete clip file from task folder
         clip_path = CLIPS_DIR / task_id / clip_name
         if clip_path.exists():
             clip_path.unlink()
+        
+        # Delete clip from all_clips folder
+        all_clips_filename = f"{task_id}_{clip_name}"
+        all_clips_path = ALL_CLIPS_DIR / all_clips_filename
+        if all_clips_path.exists():
+            all_clips_path.unlink()
+            print(f"[Delete] Removed {all_clips_filename} from all_clips")
         
         # Update clips count
         task["clips_count"] = len(task["clips"])
