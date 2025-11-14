@@ -26,6 +26,8 @@ def llm_call(video_path):
             same_person: bool = Field(description="if same person then true else false")
             emotion: Any = Field(description="emotion of the person")
             reason: Any = Field(description="reason for the same person or different person or not found")
+            transcription_text: Any = Field(description="transcription text of the person")
+            person_count: int = Field(description="number of people in the video")
 
         # Upload the file
         myfile = client.files.upload(file=video_path)
@@ -52,12 +54,16 @@ def llm_call(video_path):
                     "same_person":false (if different person)
                     "reason": "relevant reason",
                     "emotion": "null"
+                    "transcription_text": "null"
+                    "person_count": 0
                     }
                     is same person then return,
                     {
                     "same_person":true (if same person),
                     "emotion": "relevant emotion"
                     "reason": "relevant reason"
+                    "transcription_text": "relevant transcription text"
+                    "person_count": "number of people in the video"
                     }
                 """],
                 config={"temperature": 0.3, "response_schema": ExpectedOutputStructure},
@@ -134,9 +140,9 @@ def llm_call(video_path):
 #     print("result------------->")
 #     print(result)
     
-#     # expected output
-#     # {
-#     # "same_person": true,
-#     # "emotion": "Happy",
-#     # "reason": "The man's lip movements at the beginning of the video are in sync with the spoken word 'Right'. He is also smiling, indicating a positive emotion."
-#     # }
+    # expected output
+    # {
+    # "same_person": true,
+    # "emotion": "Happy",
+    # "reason": "The man's lip movements at the beginning of the video are in sync with the spoken word 'Right'. He is also smiling, indicating a positive emotion."
+    # }
