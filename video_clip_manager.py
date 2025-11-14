@@ -30,10 +30,11 @@ from app2 import llm_call
 # Directories
 UPLOAD_DIR = Path("uploads")
 CLIPS_DIR = Path("clips")
+ALL_CLIPS_DIR = Path("all_clips")  # Shared folder for all clips
 TEMP_DIR = Path("temp")
 TASKS_DIR = Path("tasks")
 
-for dir_path in [UPLOAD_DIR, CLIPS_DIR, TEMP_DIR, TASKS_DIR]:
+for dir_path in [UPLOAD_DIR, CLIPS_DIR, ALL_CLIPS_DIR, TEMP_DIR, TASKS_DIR]:
     dir_path.mkdir(exist_ok=True)
 
 # Face recognition model
@@ -199,8 +200,15 @@ def process_video_task(task_id: str, video_path: Path):
                         clip_filename = f"clip_{clip_num:03d}.mp4"
                         clip_path = task_clips_dir / clip_filename
                         
+                        # Create unique filename for all_clips folder
+                        all_clips_filename = f"{task_id}_{clip_filename}"
+                        all_clips_path = ALL_CLIPS_DIR / all_clips_filename
+                        
                         if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1, 
                                                  fps, clip_path, audio_path if has_audio else None):
+                            # Copy to all_clips folder
+                            shutil.copy2(clip_path, all_clips_path)
+                            
                             clips_info.append({
                                 "clip_name": clip_filename,
                                 "clip_path": f"clips/{task_id}/{clip_filename}",
@@ -220,8 +228,15 @@ def process_video_task(task_id: str, video_path: Path):
                     clip_filename = f"clip_{clip_num:03d}.mp4"
                     clip_path = task_clips_dir / clip_filename
                     
+                    # Create unique filename for all_clips folder
+                    all_clips_filename = f"{task_id}_{clip_filename}"
+                    all_clips_path = ALL_CLIPS_DIR / all_clips_filename
+                    
                     if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1,
                                              fps, clip_path, audio_path if has_audio else None):
+                        # Copy to all_clips folder
+                        shutil.copy2(clip_path, all_clips_path)
+                        
                         clips_info.append({
                             "clip_name": clip_filename,
                             "clip_path": f"clips/{task_id}/{clip_filename}",
@@ -250,8 +265,15 @@ def process_video_task(task_id: str, video_path: Path):
             clip_filename = f"clip_{clip_num:03d}.mp4"
             clip_path = task_clips_dir / clip_filename
             
+            # Create unique filename for all_clips folder
+            all_clips_filename = f"{task_id}_{clip_filename}"
+            all_clips_path = ALL_CLIPS_DIR / all_clips_filename
+            
             if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1,
                                      fps, clip_path, audio_path if has_audio else None):
+                # Copy to all_clips folder
+                shutil.copy2(clip_path, all_clips_path)
+                
                 clips_info.append({
                     "clip_name": clip_filename,
                     "clip_path": f"clips/{task_id}/{clip_filename}",
@@ -310,6 +332,7 @@ app = FastAPI(lifespan=lifespan)
 
 # Mount static directories
 app.mount("/clips", StaticFiles(directory=CLIPS_DIR), name="clips")
+app.mount("/all_clips", StaticFiles(directory=ALL_CLIPS_DIR), name="all_clips")
 templates = Jinja2Templates(directory="templates")
 
 
@@ -390,6 +413,42 @@ async def view_task_clips(request: Request, task_id: str):
     return templates.TemplateResponse("task_clips.html", {
         "request": request,
         "task": tasks[task_id]
+    })
+
+
+@app.get("/all-clips", response_class=HTMLResponse)
+async def view_all_clips(request: Request):
+    """View all clips from all tasks in one page."""
+    all_clips = []
+    
+    # Get all clip files from all_clips directory
+    if ALL_CLIPS_DIR.exists():
+        for clip_file in sorted(ALL_CLIPS_DIR.glob("*.mp4")):
+            # Parse filename: task_id_clip_name.mp4
+            filename = clip_file.name
+            parts = filename.split("_", 1)
+            
+            if len(parts) == 2:
+                task_id = parts[0]
+                clip_name = parts[1]
+                
+                # Get task info if available
+                task_name = "Unknown"
+                if task_id in tasks:
+                    task_name = tasks[task_id].get("video_name", "Unknown")
+                
+                all_clips.append({
+                    "filename": filename,
+                    "clip_path": f"all_clips/{filename}",
+                    "task_id": task_id,
+                    "task_name": task_name,
+                    "clip_name": clip_name
+                })
+    
+    return templates.TemplateResponse("all_clips.html", {
+        "request": request,
+        "clips": all_clips,
+        "total_clips": len(all_clips)
     })
 
 

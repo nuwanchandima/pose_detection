@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>All Clips Gallery</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .back-btn {
+            display: inline-block;
+            background: #6c757d;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            transition: all 0.2s;
+        }
+
+        .back-btn:hover {
+            background: #5a6268;
+            transform: translateX(-5px);
+        }
+
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.2em;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 1em;
+            color: #666;
+        }
+
+        .clips-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .section-title {
+            font-size: 1.8em;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .clips-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 25px;
+        }
+
+        .clip-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+        }
+
+        .clip-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.2);
+        }
+
+        .clip-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 10px;
+        }
+
+        .clip-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .clip-details {
+            font-size: 0.9em;
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .task-badge {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            margin-top: 5px;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+        }
+
+        .download-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .download-btn:hover {
+            background: #218838;
+            transform: scale(1.02);
+        }
+
+        .process-llm-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+            margin-top: 10px;
+            transition: all 0.2s;
+        }
+
+        .process-llm-btn:hover {
+            background: #0056b3;
+            transform: scale(1.02);
+        }
+
+        .process-llm-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .llm-result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .llm-result.show {
+            display: block;
+        }
+
+        .llm-result pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 12px;
+            color: #333;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state h3 {
+            margin-top: 20px;
+            font-size: 1.5em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="/" class="back-btn">← Back to Tasks</a>
+            <h1>🎬 All Clips Gallery</h1>
+            <p class="subtitle">View all generated clips from all videos</p>
+        </div>
+
+        {% if total_clips > 0 %}
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value">{{ total_clips }}</div>
+                <div class="stat-label">Total Clips</div>
+            </div>
+        </div>
+
+        <div class="clips-section">
+            <h2 class="section-title">📂 All Clips</h2>
+            
+            <div class="clips-grid">
+                {% for clip in clips %}
+                <div class="clip-card">
+                    <div class="clip-header">
+                        <div>
+                            <div class="clip-title">🎬 {{ clip.clip_name }}</div>
+                            <span class="task-badge">{{ clip.task_name }}</span>
+                        </div>
+                    </div>
+                    <div class="clip-details">
+                        📁 Task ID: {{ clip.task_id }}<br>
+                        📄 File: {{ clip.filename }}
+                    </div>
+                    <video controls>
+                        <source src="/{{ clip.clip_path }}" type="video/mp4">
+                        Your browser does not support video playback.
+                    </video>
+                    <a href="/{{ clip.clip_path }}" download="{{ clip.filename }}" class="download-btn">
+                        ⬇️ Download Clip
+                    </a>
+                    <button class="process-llm-btn" id="llm-btn-{{ loop.index }}" onclick="processWithLLM('{{ clip.task_id }}', '{{ clip.clip_name }}', {{ loop.index }}, '{{ clip.clip_path }}')">
+                        🤖 Process by LLM
+                    </button>
+                    <div class="llm-result" id="llm-result-{{ loop.index }}">
+                        <pre id="llm-json-{{ loop.index }}"></pre>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% else %}
+        <div class="clips-section">
+            <div class="empty-state">
+                <div style="font-size: 4em;">📭</div>
+                <h3>No clips available</h3>
+                <p>Upload and process some videos to see clips here.</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        async function processWithLLM(taskId, clipName, clipNumber, clipPath) {
+            const btn = document.getElementById(`llm-btn-${clipNumber}`);
+            const resultDiv = document.getElementById(`llm-result-${clipNumber}`);
+            const jsonPre = document.getElementById(`llm-json-${clipNumber}`);
+            
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.textContent = '⏳ Processing...';
+            resultDiv.classList.remove('show');
+            
+            try {
+                const response = await fetch(`/tasks/${taskId}/clips/${clipName}/process-llm`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                // Display JSON result
+                jsonPre.textContent = JSON.stringify(result, null, 2);
+                resultDiv.classList.add('show');
+                
+                // Re-enable button
+                btn.disabled = false;
+                btn.textContent = '🤖 Process by LLM';
+                
+            } catch (error) {
+                alert(`❌ Error: ${error.message}`);
+                btn.disabled = false;
+                btn.textContent = '🤖 Process by LLM';
+            }
+        }
+    </script>
+</body>
+</html>

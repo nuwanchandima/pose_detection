@@ -31,10 +31,34 @@
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }
 
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .nav-link {
+            display: inline-block;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            background: #0056b3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.3);
+        }
+
         h1 {
             color: #333;
             font-size: 2.5em;
-            margin-bottom: 10px;
+            margin: 0;
         }
 
         .subtitle {
@@ -296,7 +320,10 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎬 Video Clip Manager</h1>
+            <div class="header-content">
+                <h1>🎬 Video Clip Manager</h1>
+                <a href="/all-clips" class="nav-link">📂 View All Clips Gallery</a>
+            </div>
             <p class="subtitle">Upload videos, process in background, and manage your clips</p>
         </div>
 
