@@ -271,6 +271,28 @@
             box-shadow: 0 5px 15px rgba(23, 162, 184, 0.3);
         }
 
+        .toggle-auto-llm-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.2s;
+            margin-bottom: 20px;
+        }
+
+        .toggle-auto-llm-btn.disabled {
+            background: #dc3545;
+        }
+
+        .toggle-auto-llm-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -289,6 +311,7 @@
             <div style="display: flex; gap: 10px; align-items: center;">
                 <a href="/" class="back-btn">← Back to Tasks</a>
                 <a href="/api/llm-results/download" class="download-json-btn" download>📥 Download JSON Results</a>
+                <button id="toggleAutoLlmBtn" class="toggle-auto-llm-btn" onclick="toggleAutoLLM()">🤖 Auto LLM: Enabled</button>
             </div>
             <h1>🎬 All Clips Gallery</h1>
             <p class="subtitle">View all generated clips from all videos</p>
@@ -365,6 +388,47 @@
     <script>
         // Auto-refresh LLM results every 5 seconds
         let refreshInterval;
+
+        // Load auto LLM status on page load
+        async function loadAutoLLMStatus() {
+            try {
+                const response = await fetch('/api/auto-llm-status');
+                const data = await response.json();
+                updateAutoLLMButton(data.enabled);
+            } catch (error) {
+                console.error('Failed to load auto LLM status:', error);
+            }
+        }
+
+        // Toggle auto LLM processing
+        async function toggleAutoLLM() {
+            try {
+                const response = await fetch('/api/auto-llm/toggle', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateAutoLLMButton(data.enabled);
+                    alert(data.message);
+                }
+            } catch (error) {
+                console.error('Failed to toggle auto LLM:', error);
+                alert('Failed to toggle automatic processing');
+            }
+        }
+
+        // Update button appearance
+        function updateAutoLLMButton(enabled) {
+            const btn = document.getElementById('toggleAutoLlmBtn');
+            if (enabled) {
+                btn.textContent = '🤖 Auto LLM: Enabled';
+                btn.classList.remove('disabled');
+            } else {
+                btn.textContent = '🤖 Auto LLM: Disabled';
+                btn.classList.add('disabled');
+            }
+        }
         
         async function refreshLLMResults() {
             try {
@@ -405,6 +469,9 @@
         
         // Start auto-refresh when page loads
         document.addEventListener('DOMContentLoaded', () => {
+            // Load auto LLM status
+            loadAutoLLMStatus();
+            
             // Initial refresh
             refreshLLMResults();
             

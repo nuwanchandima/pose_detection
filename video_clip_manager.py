@@ -50,6 +50,7 @@ tasks: Dict[str, dict] = {}
 
 # LLM background processing state
 llm_processing_active = False
+auto_llm_enabled = True  # Control automatic background LLM processing
 llm_results_cache: Dict[str, dict] = {}  # Cache for LLM results
 
 # Configuration
@@ -126,12 +127,17 @@ def extract_audio(video_path: Path, audio_path: Path) -> bool:
 
 def background_llm_processor():
     """Background thread that continuously processes clips with LLM."""
-    global llm_processing_active, llm_results_cache
+    global llm_processing_active, llm_results_cache, auto_llm_enabled
     
     print("[LLM Background] Starting background LLM processor...")
     
     while llm_processing_active:
         try:
+            # Check if auto processing is enabled
+            if not auto_llm_enabled:
+                time.sleep(5)
+                continue
+            
             # Get all clips from all_clips folder
             if not ALL_CLIPS_DIR.exists():
                 time.sleep(10)
@@ -620,6 +626,26 @@ async def view_all_clips(request: Request):
 async def get_llm_results():
     """Get all LLM processing results for real-time updates."""
     return JSONResponse(llm_results_cache)
+
+
+@app.get("/api/auto-llm-status")
+async def get_auto_llm_status():
+    """Get the current status of automatic LLM processing."""
+    return JSONResponse({"enabled": auto_llm_enabled})
+
+
+@app.post("/api/auto-llm/toggle")
+async def toggle_auto_llm():
+    """Toggle automatic LLM processing on/off."""
+    global auto_llm_enabled
+    auto_llm_enabled = not auto_llm_enabled
+    status = "enabled" if auto_llm_enabled else "disabled"
+    print(f"[LLM Background] Automatic processing {status}")
+    return JSONResponse({
+        "success": True,
+        "enabled": auto_llm_enabled,
+        "message": f"Automatic LLM processing {status}"
+    })
 
 
 @app.get("/api/llm-results/download")
