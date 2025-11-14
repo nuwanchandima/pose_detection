@@ -170,6 +170,7 @@ def background_llm_processor():
                         llm_results_cache[clip_filename] = {
                             "clip_name": clip_filename,
                             "clip_path": f"all_clips/{clip_filename}",
+                            "download_url": f"/all_clips/{clip_filename}",
                             "status": "failed",
                             "error": llm_result.get("message", "Unknown error"),
                             "processed_at": datetime.now().isoformat(),
@@ -181,6 +182,7 @@ def background_llm_processor():
                         llm_results_cache[clip_filename] = {
                             "clip_name": clip_filename,
                             "clip_path": f"all_clips/{clip_filename}",
+                            "download_url": f"/all_clips/{clip_filename}",
                             "status": "success",
                             "error": None,
                             "processed_at": datetime.now().isoformat(),
@@ -196,6 +198,7 @@ def background_llm_processor():
                     llm_results_cache[clip_filename] = {
                         "clip_name": clip_filename,
                         "clip_path": f"all_clips/{clip_filename}",
+                        "download_url": f"/all_clips/{clip_filename}",
                         "status": "failed",
                         "error": str(e),
                         "processed_at": datetime.now().isoformat(),
@@ -619,6 +622,24 @@ async def get_llm_results():
     return JSONResponse(llm_results_cache)
 
 
+@app.get("/api/llm-results/download")
+async def download_llm_results():
+    """Download LLM results as JSON file."""
+    from fastapi.responses import FileResponse
+    
+    # Ensure file exists and is up to date
+    save_llm_results()
+    
+    if LLM_RESULTS_FILE.exists():
+        return FileResponse(
+            path=str(LLM_RESULTS_FILE),
+            filename="llm_results.json",
+            media_type="application/json"
+        )
+    else:
+        return JSONResponse({"error": "No results available"}, status_code=404)
+
+
 @app.delete("/tasks/{task_id}")
 async def delete_task(task_id: str):
     """Delete a task and all its clips."""
@@ -673,6 +694,8 @@ async def delete_task(task_id: str):
 @app.post("/tasks/{task_id}/clips/{clip_name}/process-llm")
 async def process_clip_with_llm(task_id: str, clip_name: str):
     """Process a clip with LLM using Gemini API."""
+    global llm_results_cache
+    
     try:
         if task_id not in tasks:
             return JSONResponse({"error": "Task not found"}, status_code=404)
@@ -699,8 +722,23 @@ async def process_clip_with_llm(task_id: str, clip_name: str):
         # Call the LLM function from app2.py
         llm_result = llm_call(str(clip_path))
         
+        # Generate the all_clips filename
+        all_clips_filename = f"{task_id}_{clip_name}"
+        
         # Check if there was an error
         if isinstance(llm_result, dict) and llm_result.get("error") == True:
+            # Save failed result to JSON
+            llm_results_cache[all_clips_filename] = {
+                "clip_name": all_clips_filename,
+                "clip_path": f"all_clips/{all_clips_filename}",
+                "download_url": f"/all_clips/{all_clips_filename}",
+                "status": "failed",
+                "error": llm_result.get("message", "Unknown error occurred"),
+                "processed_at": datetime.now().isoformat(),
+                "llm_result": None
+            }
+            save_llm_results()
+            
             return JSONResponse({
                 "success": False,
                 "task_id": task_id,
@@ -709,7 +747,19 @@ async def process_clip_with_llm(task_id: str, clip_name: str):
                 "processed_at": datetime.now().isoformat()
             })
         
-        # Success - return the LLM result with additional metadata
+        # Success - save to JSON
+        llm_results_cache[all_clips_filename] = {
+            "clip_name": all_clips_filename,
+            "clip_path": f"all_clips/{all_clips_filename}",
+            "download_url": f"/all_clips/{all_clips_filename}",
+            "status": "success",
+            "error": None,
+            "processed_at": datetime.now().isoformat(),
+            "llm_result": llm_result
+        }
+        save_llm_results()
+        
+        # Return the LLM result with additional metadata
         response = {
             "success": True,
             "task_id": task_id,
@@ -730,6 +780,20 @@ async def process_clip_with_llm(task_id: str, clip_name: str):
         print(f"[Error] LLM processing failed: {e}")
         import traceback
         traceback.print_exc()
+        
+        # Save exception to JSON
+        all_clips_filename = f"{task_id}_{clip_name}"
+        llm_results_cache[all_clips_filename] = {
+            "clip_name": all_clips_filename,
+            "clip_path": f"all_clips/{all_clips_filename}",
+            "download_url": f"/all_clips/{all_clips_filename}",
+            "status": "failed",
+            "error": str(e),
+            "processed_at": datetime.now().isoformat(),
+            "llm_result": None
+        }
+        save_llm_results()
+        
         return JSONResponse({
             "success": False,
             "task_id": task_id,

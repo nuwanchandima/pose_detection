@@ -250,6 +250,27 @@
             color: white;
         }
 
+        .download-json-btn {
+            background: #17a2b8;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.2s;
+            margin-bottom: 20px;
+        }
+
+        .download-json-btn:hover {
+            background: #138496;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(23, 162, 184, 0.3);
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -265,7 +286,10 @@
 <body>
     <div class="container">
         <div class="header">
-            <a href="/" class="back-btn">← Back to Tasks</a>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <a href="/" class="back-btn">← Back to Tasks</a>
+                <a href="/api/llm-results/download" class="download-json-btn" download>📥 Download JSON Results</a>
+            </div>
             <h1>🎬 All Clips Gallery</h1>
             <p class="subtitle">View all generated clips from all videos</p>
         </div>
