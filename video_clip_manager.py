@@ -194,17 +194,47 @@ def process_video_task(task_id: str, video_path: Path):
                     similarity = compute_similarity(face_embedding, current_clip_embedding)
                     
                     if similarity < SIMILARITY_THRESHOLD:
-                        # Face changed! Save previous clip
+                        # Face changed! Check if previous clip is long enough
                         clip_length = frame_idx - current_clip_start
                         clip_duration = clip_length / fps
                         
-                        # Skip clips shorter than 1 second
-                        if clip_duration < 1.0:
+                        # Only save clips that are at least 1 second
+                        if clip_duration >= 1.0:
+                            clip_num = len(clips_info) + 1
+                            clip_filename = f"clip_{clip_num:03d}.mp4"
+                            clip_path = task_clips_dir / clip_filename
+                            
+                            # Create unique filename for all_clips folder
+                            all_clips_filename = f"{task_id}_{clip_filename}"
+                            all_clips_path = ALL_CLIPS_DIR / all_clips_filename
+                            
+                            if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1, 
+                                                     fps, clip_path, audio_path if has_audio else None):
+                                # Copy to all_clips folder
+                                shutil.copy2(clip_path, all_clips_path)
+                                
+                                clips_info.append({
+                                    "clip_name": clip_filename,
+                                    "clip_path": f"clips/{task_id}/{clip_filename}",
+                                    "start_frame": current_clip_start,
+                                    "end_frame": frame_idx - 1,
+                                    "frames": clip_length,
+                                    "duration": f"{clip_duration:.2f}s"
+                                })
+                        else:
                             print(f"[Task {task_id}] Skipping short clip: {clip_duration:.2f}s")
-                            current_clip_start = frame_idx
-                            current_clip_embedding = face_embedding
-                            continue
                         
+                        # Start new clip from current frame
+                        current_clip_start = frame_idx
+                        current_clip_embedding = face_embedding
+            else:
+                # No face or multiple faces - end current clip if exists
+                if current_clip_start is not None:
+                    clip_length = frame_idx - current_clip_start
+                    clip_duration = clip_length / fps
+                    
+                    # Only save clips that are at least 1 second
+                    if clip_duration >= 1.0:
                         clip_num = len(clips_info) + 1
                         clip_filename = f"clip_{clip_num:03d}.mp4"
                         clip_path = task_clips_dir / clip_filename
@@ -213,7 +243,7 @@ def process_video_task(task_id: str, video_path: Path):
                         all_clips_filename = f"{task_id}_{clip_filename}"
                         all_clips_path = ALL_CLIPS_DIR / all_clips_filename
                         
-                        if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1, 
+                        if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1,
                                                  fps, clip_path, audio_path if has_audio else None):
                             # Copy to all_clips folder
                             shutil.copy2(clip_path, all_clips_path)
@@ -226,44 +256,10 @@ def process_video_task(task_id: str, video_path: Path):
                                 "frames": clip_length,
                                 "duration": f"{clip_duration:.2f}s"
                             })
-                        
-                        current_clip_start = frame_idx
-                        current_clip_embedding = face_embedding
-            else:
-                # No face or multiple faces
-                if current_clip_start is not None:
-                    clip_length = frame_idx - current_clip_start
-                    clip_duration = clip_length / fps
-                    
-                    # Skip clips shorter than 1 second
-                    if clip_duration < 1.0:
+                    else:
                         print(f"[Task {task_id}] Skipping short clip: {clip_duration:.2f}s")
-                        current_clip_start = None
-                        current_clip_embedding = None
-                        continue
                     
-                    clip_num = len(clips_info) + 1
-                    clip_filename = f"clip_{clip_num:03d}.mp4"
-                    clip_path = task_clips_dir / clip_filename
-                    
-                    # Create unique filename for all_clips folder
-                    all_clips_filename = f"{task_id}_{clip_filename}"
-                    all_clips_path = ALL_CLIPS_DIR / all_clips_filename
-                    
-                    if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1,
-                                             fps, clip_path, audio_path if has_audio else None):
-                        # Copy to all_clips folder
-                        shutil.copy2(clip_path, all_clips_path)
-                        
-                        clips_info.append({
-                            "clip_name": clip_filename,
-                            "clip_path": f"clips/{task_id}/{clip_filename}",
-                            "start_frame": current_clip_start,
-                            "end_frame": frame_idx - 1,
-                            "frames": clip_length,
-                            "duration": f"{clip_duration:.2f}s"
-                        })
-                    
+                    # Reset clip tracking
                     current_clip_start = None
                     current_clip_embedding = None
             
