@@ -196,6 +196,15 @@ def process_video_task(task_id: str, video_path: Path):
                     if similarity < SIMILARITY_THRESHOLD:
                         # Face changed! Save previous clip
                         clip_length = frame_idx - current_clip_start
+                        clip_duration = clip_length / fps
+                        
+                        # Skip clips shorter than 1 second
+                        if clip_duration < 1.0:
+                            print(f"[Task {task_id}] Skipping short clip: {clip_duration:.2f}s")
+                            current_clip_start = frame_idx
+                            current_clip_embedding = face_embedding
+                            continue
+                        
                         clip_num = len(clips_info) + 1
                         clip_filename = f"clip_{clip_num:03d}.mp4"
                         clip_path = task_clips_dir / clip_filename
@@ -215,7 +224,7 @@ def process_video_task(task_id: str, video_path: Path):
                                 "start_frame": current_clip_start,
                                 "end_frame": frame_idx - 1,
                                 "frames": clip_length,
-                                "duration": f"{clip_length/fps:.2f}s"
+                                "duration": f"{clip_duration:.2f}s"
                             })
                         
                         current_clip_start = frame_idx
@@ -224,6 +233,15 @@ def process_video_task(task_id: str, video_path: Path):
                 # No face or multiple faces
                 if current_clip_start is not None:
                     clip_length = frame_idx - current_clip_start
+                    clip_duration = clip_length / fps
+                    
+                    # Skip clips shorter than 1 second
+                    if clip_duration < 1.0:
+                        print(f"[Task {task_id}] Skipping short clip: {clip_duration:.2f}s")
+                        current_clip_start = None
+                        current_clip_embedding = None
+                        continue
+                    
                     clip_num = len(clips_info) + 1
                     clip_filename = f"clip_{clip_num:03d}.mp4"
                     clip_path = task_clips_dir / clip_filename
@@ -243,7 +261,7 @@ def process_video_task(task_id: str, video_path: Path):
                             "start_frame": current_clip_start,
                             "end_frame": frame_idx - 1,
                             "frames": clip_length,
-                            "duration": f"{clip_length/fps:.2f}s"
+                            "duration": f"{clip_duration:.2f}s"
                         })
                     
                     current_clip_start = None
@@ -261,27 +279,33 @@ def process_video_task(task_id: str, video_path: Path):
         # Handle last clip
         if current_clip_start is not None:
             clip_length = frame_idx - current_clip_start
-            clip_num = len(clips_info) + 1
-            clip_filename = f"clip_{clip_num:03d}.mp4"
-            clip_path = task_clips_dir / clip_filename
+            clip_duration = clip_length / fps
             
-            # Create unique filename for all_clips folder
-            all_clips_filename = f"{task_id}_{clip_filename}"
-            all_clips_path = ALL_CLIPS_DIR / all_clips_filename
-            
-            if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1,
-                                     fps, clip_path, audio_path if has_audio else None):
-                # Copy to all_clips folder
-                shutil.copy2(clip_path, all_clips_path)
+            # Only save if duration is at least 1 second
+            if clip_duration >= 1.0:
+                clip_num = len(clips_info) + 1
+                clip_filename = f"clip_{clip_num:03d}.mp4"
+                clip_path = task_clips_dir / clip_filename
                 
-                clips_info.append({
-                    "clip_name": clip_filename,
-                    "clip_path": f"clips/{task_id}/{clip_filename}",
-                    "start_frame": current_clip_start,
-                    "end_frame": frame_idx - 1,
-                    "frames": clip_length,
-                    "duration": f"{clip_length/fps:.2f}s"
-                })
+                # Create unique filename for all_clips folder
+                all_clips_filename = f"{task_id}_{clip_filename}"
+                all_clips_path = ALL_CLIPS_DIR / all_clips_filename
+                
+                if create_clip_with_audio(video_path, current_clip_start, frame_idx - 1,
+                                         fps, clip_path, audio_path if has_audio else None):
+                    # Copy to all_clips folder
+                    shutil.copy2(clip_path, all_clips_path)
+                    
+                    clips_info.append({
+                        "clip_name": clip_filename,
+                        "clip_path": f"clips/{task_id}/{clip_filename}",
+                        "start_frame": current_clip_start,
+                        "end_frame": frame_idx - 1,
+                        "frames": clip_length,
+                        "duration": f"{clip_duration:.2f}s"
+                    })
+            else:
+                print(f"[Task {task_id}] Skipping short last clip: {clip_duration:.2f}s")
         
         cap.release()
         
