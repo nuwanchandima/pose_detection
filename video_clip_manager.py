@@ -15,6 +15,7 @@ import uuid
 import json
 from datetime import datetime
 import asyncio
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
@@ -33,15 +34,23 @@ CLIPS_DIR = Path("clips")
 ALL_CLIPS_DIR = Path("all_clips")  # Shared folder for all clips
 TEMP_DIR = Path("temp")
 TASKS_DIR = Path("tasks")
+LLM_RESULTS_DIR = Path("llm_results")  # Store LLM processing results
 
-for dir_path in [UPLOAD_DIR, CLIPS_DIR, ALL_CLIPS_DIR, TEMP_DIR, TASKS_DIR]:
+for dir_path in [UPLOAD_DIR, CLIPS_DIR, ALL_CLIPS_DIR, TEMP_DIR, TASKS_DIR, LLM_RESULTS_DIR]:
     dir_path.mkdir(exist_ok=True)
+
+# LLM results file
+LLM_RESULTS_FILE = LLM_RESULTS_DIR / "llm_results.json"
 
 # Face recognition model
 face_app = None
 
 # Task storage (in production, use database)
 tasks: Dict[str, dict] = {}
+
+# LLM background processing state
+llm_processing_active = False
+llm_results_cache: Dict[str, dict] = {}  # Cache for LLM results
 
 # Configuration
 SIMILARITY_THRESHOLD = 0.50  # Faces above this are considered "same person"
@@ -69,6 +78,30 @@ def load_all_tasks():
             print(f"[Error] Failed to load task {task_file}: {e}")
 
 
+def load_llm_results():
+    """Load LLM results from disk."""
+    global llm_results_cache
+    if LLM_RESULTS_FILE.exists():
+        try:
+            with open(LLM_RESULTS_FILE, "r") as f:
+                llm_results_cache = json.load(f)
+            print(f"[Startup] Loaded {len(llm_results_cache)} LLM results")
+        except Exception as e:
+            print(f"[Error] Failed to load LLM results: {e}")
+            llm_results_cache = {}
+    else:
+        llm_results_cache = {}
+
+
+def save_llm_results():
+    """Save LLM results to disk."""
+    try:
+        with open(LLM_RESULTS_FILE, "w") as f:
+            json.dump(llm_results_cache, f, indent=2)
+    except Exception as e:
+        print(f"[Error] Failed to save LLM results: {e}")
+
+
 def compute_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
     """Compute cosine similarity between two face embeddings."""
     emb1_norm = emb1 / np.linalg.norm(emb1)
@@ -89,6 +122,99 @@ def extract_audio(video_path: Path, audio_path: Path) -> bool:
     except Exception as e:
         print(f"[Error] Audio extraction failed: {e}")
         return False
+
+
+def background_llm_processor():
+    """Background thread that continuously processes clips with LLM."""
+    global llm_processing_active, llm_results_cache
+    
+    print("[LLM Background] Starting background LLM processor...")
+    
+    while llm_processing_active:
+        try:
+            # Get all clips from all_clips folder
+            if not ALL_CLIPS_DIR.exists():
+                time.sleep(10)
+                continue
+            
+            clip_files = list(ALL_CLIPS_DIR.glob("*.mp4"))
+            
+            if not clip_files:
+                time.sleep(10)
+                continue
+            
+            # Process each clip
+            for clip_file in clip_files:
+                if not llm_processing_active:
+                    break
+                
+                clip_filename = clip_file.name
+                clip_path_str = str(clip_file)
+                
+                # Check if already processed successfully
+                if clip_filename in llm_results_cache:
+                    result = llm_results_cache[clip_filename]
+                    if result.get("status") == "success" and not result.get("error"):
+                        # Already processed successfully, skip
+                        continue
+                
+                # Process with LLM
+                print(f"[LLM Background] Processing: {clip_filename}")
+                
+                try:
+                    llm_result = llm_call(clip_path_str)
+                    
+                    # Check if error
+                    if isinstance(llm_result, dict) and llm_result.get("error") == True:
+                        # Failed - save with error status
+                        llm_results_cache[clip_filename] = {
+                            "clip_name": clip_filename,
+                            "clip_path": f"all_clips/{clip_filename}",
+                            "status": "failed",
+                            "error": llm_result.get("message", "Unknown error"),
+                            "processed_at": datetime.now().isoformat(),
+                            "llm_result": None
+                        }
+                        print(f"[LLM Background] Failed: {clip_filename} - {llm_result.get('message')}")
+                    else:
+                        # Success
+                        llm_results_cache[clip_filename] = {
+                            "clip_name": clip_filename,
+                            "clip_path": f"all_clips/{clip_filename}",
+                            "status": "success",
+                            "error": None,
+                            "processed_at": datetime.now().isoformat(),
+                            "llm_result": llm_result
+                        }
+                        print(f"[LLM Background] Success: {clip_filename}")
+                    
+                    # Save results to disk
+                    save_llm_results()
+                    
+                except Exception as e:
+                    print(f"[LLM Background] Exception processing {clip_filename}: {e}")
+                    llm_results_cache[clip_filename] = {
+                        "clip_name": clip_filename,
+                        "clip_path": f"all_clips/{clip_filename}",
+                        "status": "failed",
+                        "error": str(e),
+                        "processed_at": datetime.now().isoformat(),
+                        "llm_result": None
+                    }
+                    save_llm_results()
+                
+                # Wait a bit between clips to avoid overwhelming API
+                time.sleep(2)
+            
+            # Wait before next scan
+            print(f"[LLM Background] Processed {len(clip_files)} clips, waiting 30s for next scan...")
+            time.sleep(30)
+            
+        except Exception as e:
+            print(f"[LLM Background] Error in background processor: {e}")
+            time.sleep(10)
+    
+    print("[LLM Background] Background processor stopped")
 
 
 def create_clip_with_audio(
@@ -330,7 +456,7 @@ def process_video_task(task_id: str, video_path: Path):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load face recognition model and tasks on startup."""
-    global face_app
+    global face_app, llm_processing_active
     print("[Startup] Loading InsightFace model on GPU...")
     face_app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
     face_app.prepare(ctx_id=0, det_size=(640, 640))
@@ -341,9 +467,20 @@ async def lifespan(app: FastAPI):
     load_all_tasks()
     print(f"[Startup] Loaded {len(tasks)} tasks")
     
+    # Load LLM results
+    print("[Startup] Loading LLM results...")
+    load_llm_results()
+    
+    # Start background LLM processor
+    llm_processing_active = True
+    llm_thread = threading.Thread(target=background_llm_processor, daemon=True)
+    llm_thread.start()
+    print("[Startup] Background LLM processor started")
+    
     yield
     
     print("[Shutdown] Cleaning up...")
+    llm_processing_active = False
     executor.shutdown(wait=False)
 
 
@@ -457,12 +594,16 @@ async def view_all_clips(request: Request):
                 if task_id in tasks:
                     task_name = tasks[task_id].get("video_name", "Unknown")
                 
+                # Get LLM result if available
+                llm_result = llm_results_cache.get(filename, None)
+                
                 all_clips.append({
                     "filename": filename,
                     "clip_path": f"all_clips/{filename}",
                     "task_id": task_id,
                     "task_name": task_name,
-                    "clip_name": clip_name
+                    "clip_name": clip_name,
+                    "llm_result": llm_result
                 })
     
     return templates.TemplateResponse("all_clips.html", {
@@ -470,6 +611,12 @@ async def view_all_clips(request: Request):
         "clips": all_clips,
         "total_clips": len(all_clips)
     })
+
+
+@app.get("/api/llm-results")
+async def get_llm_results():
+    """Get all LLM processing results for real-time updates."""
+    return JSONResponse(llm_results_cache)
 
 
 @app.delete("/tasks/{task_id}")

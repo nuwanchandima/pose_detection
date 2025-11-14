@@ -221,6 +221,35 @@
             color: #333;
         }
 
+        .llm-status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .llm-status-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .llm-status-failed {
+            background: #dc3545;
+            color: white;
+        }
+
+        .llm-status-processing {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .llm-status-pending {
+            background: #6c757d;
+            color: white;
+        }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -269,14 +298,30 @@
                         <source src="/{{ clip.clip_path }}" type="video/mp4">
                         Your browser does not support video playback.
                     </video>
+                    
+                    <!-- LLM Status Badge -->
+                    <div id="llm-status-{{ loop.index }}">
+                        {% if clip.llm_result %}
+                            {% if clip.llm_result.status == 'success' %}
+                                <span class="llm-status-badge llm-status-success">✅ LLM Processed</span>
+                            {% elif clip.llm_result.status == 'failed' %}
+                                <span class="llm-status-badge llm-status-failed">❌ LLM Failed</span>
+                            {% else %}
+                                <span class="llm-status-badge llm-status-processing">⏳ Processing...</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="llm-status-badge llm-status-pending">⏱️ Pending</span>
+                        {% endif %}
+                    </div>
+                    
                     <a href="/{{ clip.clip_path }}" download="{{ clip.filename }}" class="download-btn">
                         ⬇️ Download Clip
                     </a>
                     <button class="process-llm-btn" id="llm-btn-{{ loop.index }}" onclick="processWithLLM('{{ clip.task_id }}', '{{ clip.clip_name }}', {{ loop.index }}, '{{ clip.clip_path }}')">
                         🤖 Process by LLM
                     </button>
-                    <div class="llm-result" id="llm-result-{{ loop.index }}">
-                        <pre id="llm-json-{{ loop.index }}"></pre>
+                    <div class="llm-result {% if clip.llm_result %}show{% endif %}" id="llm-result-{{ loop.index }}" data-clip-filename="{{ clip.filename }}">
+                        <pre id="llm-json-{{ loop.index }}">{% if clip.llm_result %}{{ clip.llm_result | tojson(indent=2) }}{% endif %}</pre>
                     </div>
                 </div>
                 {% endfor %}
@@ -294,6 +339,62 @@
     </div>
 
     <script>
+        // Auto-refresh LLM results every 5 seconds
+        let refreshInterval;
+        
+        async function refreshLLMResults() {
+            try {
+                const response = await fetch('/api/llm-results');
+                const llmResults = await response.json();
+                
+                // Update each clip's LLM result
+                document.querySelectorAll('[data-clip-filename]').forEach((resultDiv, index) => {
+                    const clipFilename = resultDiv.getAttribute('data-clip-filename');
+                    const llmResult = llmResults[clipFilename];
+                    const clipIndex = index + 1;
+                    
+                    const statusDiv = document.getElementById(`llm-status-${clipIndex}`);
+                    const jsonPre = document.getElementById(`llm-json-${clipIndex}`);
+                    const resultContainer = document.getElementById(`llm-result-${clipIndex}`);
+                    
+                    if (llmResult) {
+                        // Update status badge
+                        if (llmResult.status === 'success') {
+                            statusDiv.innerHTML = '<span class="llm-status-badge llm-status-success">✅ LLM Processed</span>';
+                        } else if (llmResult.status === 'failed') {
+                            statusDiv.innerHTML = '<span class="llm-status-badge llm-status-failed">❌ LLM Failed</span>';
+                        } else {
+                            statusDiv.innerHTML = '<span class="llm-status-badge llm-status-processing">⏳ Processing...</span>';
+                        }
+                        
+                        // Update result display
+                        jsonPre.textContent = JSON.stringify(llmResult, null, 2);
+                        resultContainer.classList.add('show');
+                    } else {
+                        statusDiv.innerHTML = '<span class="llm-status-badge llm-status-pending">⏱️ Pending</span>';
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to refresh LLM results:', error);
+            }
+        }
+        
+        // Start auto-refresh when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initial refresh
+            refreshLLMResults();
+            
+            // Refresh every 5 seconds
+            refreshInterval = setInterval(refreshLLMResults, 5000);
+        });
+        
+        // Stop refresh when page unloads
+        window.addEventListener('beforeunload', () => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        });
+        
         async function processWithLLM(taskId, clipName, clipNumber, clipPath) {
             const btn = document.getElementById(`llm-btn-${clipNumber}`);
             const resultDiv = document.getElementById(`llm-result-${clipNumber}`);
@@ -318,6 +419,9 @@
                 // Re-enable button
                 btn.disabled = false;
                 btn.textContent = '🤖 Process by LLM';
+                
+                // Trigger immediate refresh
+                refreshLLMResults();
                 
             } catch (error) {
                 alert(`❌ Error: ${error.message}`);
