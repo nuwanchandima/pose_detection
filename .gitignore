@@ -10,6 +10,8 @@ venv/
 *.egg-info/
 dist/
 build/
+.env
+.env.*
 
 # Face database
 faces_db/
