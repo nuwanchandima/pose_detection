@@ -643,6 +643,8 @@ async def download_llm_results():
 @app.delete("/tasks/{task_id}")
 async def delete_task(task_id: str):
     """Delete a task and all its clips."""
+    global llm_results_cache
+    
     try:
         if task_id not in tasks:
             return JSONResponse({"error": "Task not found"}, status_code=404)
@@ -660,13 +662,23 @@ async def delete_task(task_id: str):
             shutil.rmtree(task_clips_dir)
         
         # Delete all clips from all_clips folder that belong to this task
+        # and remove their LLM results
         if ALL_CLIPS_DIR.exists():
             for clip_file in ALL_CLIPS_DIR.glob(f"{task_id}_*.mp4"):
                 try:
+                    clip_filename = clip_file.name
                     clip_file.unlink()
-                    print(f"[Delete] Removed {clip_file.name} from all_clips")
+                    print(f"[Delete] Removed {clip_filename} from all_clips")
+                    
+                    # Remove LLM result from cache and JSON
+                    if clip_filename in llm_results_cache:
+                        del llm_results_cache[clip_filename]
+                        print(f"[Delete] Removed LLM result for {clip_filename}")
                 except Exception as e:
                     print(f"[Error] Failed to delete {clip_file.name}: {e}")
+        
+        # Save updated LLM results
+        save_llm_results()
         
         # Delete task state file
         task_file = TASKS_DIR / f"{task_id}.json"
@@ -806,6 +818,8 @@ async def process_clip_with_llm(task_id: str, clip_name: str):
 @app.delete("/tasks/{task_id}/clips/{clip_name}")
 async def delete_clip(task_id: str, clip_name: str):
     """Delete a specific clip from a task."""
+    global llm_results_cache
+    
     try:
         if task_id not in tasks:
             return JSONResponse({"error": "Task not found"}, status_code=404)
@@ -834,6 +848,12 @@ async def delete_clip(task_id: str, clip_name: str):
         if all_clips_path.exists():
             all_clips_path.unlink()
             print(f"[Delete] Removed {all_clips_filename} from all_clips")
+        
+        # Remove LLM result from cache and JSON
+        if all_clips_filename in llm_results_cache:
+            del llm_results_cache[all_clips_filename]
+            save_llm_results()
+            print(f"[Delete] Removed LLM result for {all_clips_filename}")
         
         # Update clips count
         task["clips_count"] = len(task["clips"])
