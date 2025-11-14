@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
 from insightface.app import FaceAnalysis
+from app2 import llm_call
 
 # Directories
 UPLOAD_DIR = Path("uploads")
@@ -436,7 +437,7 @@ async def delete_task(task_id: str):
 
 @app.post("/tasks/{task_id}/clips/{clip_name}/process-llm")
 async def process_clip_with_llm(task_id: str, clip_name: str):
-    """Process a clip with LLM (dummy implementation for now)."""
+    """Process a clip with LLM using Gemini API."""
     try:
         if task_id not in tasks:
             return JSONResponse({"error": "Task not found"}, status_code=404)
@@ -453,38 +454,53 @@ async def process_clip_with_llm(task_id: str, clip_name: str):
         if not clip_info:
             return JSONResponse({"error": "Clip not found"}, status_code=404)
         
-        # Dummy LLM response
-        dummy_response = {
+        # Get the clip file path
+        clip_path = CLIPS_DIR / task_id / clip_name
+        if not clip_path.exists():
+            return JSONResponse({"error": "Clip file not found"}, status_code=404)
+        
+        print(f"[LLM] Processing clip: {clip_path}")
+        
+        # Call the LLM function from app2.py
+        llm_result = llm_call(str(clip_path))
+        
+        # Check if there was an error
+        if isinstance(llm_result, dict) and llm_result.get("error") == True:
+            return JSONResponse({
+                "success": False,
+                "task_id": task_id,
+                "clip_name": clip_name,
+                "error": llm_result.get("message", "Unknown error occurred"),
+                "processed_at": datetime.now().isoformat()
+            })
+        
+        # Success - return the LLM result with additional metadata
+        response = {
             "success": True,
             "task_id": task_id,
             "clip_name": clip_name,
-            "analysis": {
-                "video_duration": clip_info.get("duration", "unknown"),
+            "clip_info": {
+                "duration": clip_info.get("duration", "unknown"),
                 "frame_count": clip_info.get("frames", 0),
-                "detected_objects": ["person", "face", "background"],
-                "scene_type": "indoor",
-                "confidence_score": 0.92,
-                "description": "This is a sample LLM analysis result. The actual processing will be implemented later.",
-                "metadata": {
-                    "model": "dummy-llm-v1",
-                    "processed_at": datetime.now().isoformat(),
-                    "processing_time_ms": 150
-                }
+                "start_frame": clip_info.get("start_frame", 0),
+                "end_frame": clip_info.get("end_frame", 0)
             },
-            "recommendations": [
-                "Consider enhancing video quality",
-                "Good lighting detected",
-                "Clear face visibility"
-            ]
+            "llm_analysis": llm_result,
+            "processed_at": datetime.now().isoformat()
         }
         
-        return JSONResponse(dummy_response)
+        return JSONResponse(response)
         
     except Exception as e:
         print(f"[Error] LLM processing failed: {e}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse({
             "success": False,
-            "error": str(e)
+            "task_id": task_id,
+            "clip_name": clip_name,
+            "error": str(e),
+            "processed_at": datetime.now().isoformat()
         }, status_code=500)
 
 
