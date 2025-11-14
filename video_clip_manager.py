@@ -151,7 +151,7 @@ def background_llm_processor():
             
             # Process each clip
             for clip_file in clip_files:
-                if not llm_processing_active:
+                if not llm_processing_active or not auto_llm_enabled:
                     break
                 
                 clip_filename = clip_file.name
@@ -163,6 +163,7 @@ def background_llm_processor():
                     if result.get("status") == "success" and not result.get("error"):
                         # Already processed successfully, skip
                         continue
+                    # Failed clips will be retried automatically
                 
                 # Process with LLM
                 print(f"[LLM Background] Processing: {clip_filename}")
